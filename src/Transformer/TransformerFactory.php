@@ -106,7 +106,8 @@ class TransformerFactory
             return $this->createContractBinding($class);
         }
 
-        $class = is_object($class) ? get_class($class) : $class;
+        //$class = is_object($class) ? get_class($class) : $class;
+        $class = is_array($class) ? 'array' : (is_object($class) ? get_class($class) : $class);
 
         if (! $this->hasBinding($class)) {
             throw new RuntimeException('Unable to find bound transformer for "'.$class.'" class.');
@@ -162,7 +163,8 @@ class TransformerFactory
             $class = $class->first();
         }
 
-        $class = is_object($class) ? get_class($class) : $class;
+        //$class = is_object($class) ? get_class($class) : $class;
+        $class = is_array($class) ? 'array' : (is_object($class) ? get_class($class) : $class);
 
         return isset($this->bindings[$class]);
     }
