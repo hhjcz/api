@@ -78,7 +78,9 @@ class Factory
         if ($collection->isEmpty()) {
             $class = get_class($collection);
         } else {
-            $class = get_class($collection->first());
+            // hhj:
+            // $class = get_class($collection->first());
+            $class = is_array($collection->first()) ? 'array' : get_class($collection->first());
         }
 
         $binding = $this->transformer->register($class, $transformer, $parameters, $after);
@@ -120,7 +122,9 @@ class Factory
         if ($paginator->isEmpty()) {
             $class = get_class($paginator);
         } else {
-            $class = get_class($paginator->first());
+            // hhj:
+            // $class = get_class($paginator->first());
+            $class = is_array($paginator->first()) ? 'array' : get_class($paginator->first());
         }
 
         $binding = $this->transformer->register($class, $transformer, $parameters, $after);
