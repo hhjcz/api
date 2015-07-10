@@ -3,18 +3,18 @@
 namespace Dingo\Api;
 
 use RuntimeException;
+use Dingo\Api\Auth\Auth;
 use Illuminate\Http\Request;
 use Dingo\Api\Routing\Router;
-use Illuminate\Auth\GenericUser;
-use Dingo\Api\Auth\Authenticator;
 use Illuminate\Container\Container;
 use Dingo\Api\Http\InternalRequest;
-use Illuminate\Routing\UrlGenerator;
 use Illuminate\Filesystem\Filesystem;
+use Illuminate\Auth\GenericUser;
 use Illuminate\Database\Eloquent\Model;
+use Symfony\Component\HttpFoundation\Cookie;
+use Dingo\Api\Exception\InternalHttpException;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Illuminate\Support\Facades\Request as RequestFacade;
-use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 class Dispatcher
@@ -34,32 +34,18 @@ class Dispatcher
     protected $files;
 
     /**
-     * Illuminate url generator instance.
-     *
-     * @var \Illuminate\Routing\UrlGenerator
-     */
-    protected $url;
-
-    /**
-     * API router instance.
+     * Router instance.
      *
      * @var \Dingo\Api\Routing\Router
      */
     protected $router;
 
     /**
-     * API authentication Authenticator instance.
+     * Auth instance.
      *
-     * @var \Dingo\Api\Auth\Authenticator
+     * @var \Dingo\Api\Auth\Auth
      */
     protected $auth;
-
-    /**
-     * API config instance.
-     *
-     * @var \Dingo\Api\Config
-     */
-    protected $config;
 
     /**
      * Internal request stack.
@@ -90,6 +76,13 @@ class Dispatcher
     protected $headers = [];
 
     /**
+     * Request cookies.
+     *
+     * @var array
+     */
+    protected $cookies = [];
+
+    /**
      * Request parameters.
      *
      * @var array
@@ -108,7 +101,7 @@ class Dispatcher
      *
      * @var array
      */
-    protected $uploadedFiles = [];
+    protected $uploads = [];
 
     /**
      * Domain for the request.
@@ -132,24 +125,56 @@ class Dispatcher
     protected $persistAuthentication = true;
 
     /**
+     * API vendor.
+     *
+     * @var string
+     */
+    protected $vendor;
+
+    /**
+     * API prefix.
+     *
+     * @var string
+     */
+    protected $prefix;
+
+    /**
+     * Default version.
+     *
+     * @var string
+     */
+    protected $defaultVersion;
+
+    /**
+     * Default domain.
+     *
+     * @var string
+     */
+    protected $defaultDomain;
+
+    /**
+     * Default format.
+     *
+     * @var string
+     */
+    protected $defaultFormat;
+
+    /**
      * Create a new dispatcher instance.
      *
-     * @param  \Illuminate\Container\Container  $container
-     * @param  \Illuminate\Filesystem\Filesystem  $files
-     * @param  \Illuminate\Routing\UrlGenerator  $url
-     * @param  \Dingo\Api\Routing\Router  $router
-     * @param  \Dingo\Api\Auth\Authenticator  $auth
-     * @param  \Dingo\Api\Config  $config
+     * @param \Illuminate\Container\Container   $container
+     * @param \Illuminate\Filesystem\Filesystem $files
+     * @param \Dingo\Api\Routing\Router         $router
+     * @param \Dingo\Api\Auth\Auth              $auth
+     *
      * @return void
      */
-    public function __construct(Container $container, Filesystem $files, UrlGenerator $url, Router $router, Authenticator $auth, Config $config)
+    public function __construct(Container $container, Filesystem $files, Router $router, Auth $auth)
     {
         $this->container = $container;
         $this->files = $files;
-        $this->url = $url;
         $this->router = $router;
         $this->auth = $auth;
-        $this->config = $config;
 
         $this->setupRequestStack();
     }
@@ -167,7 +192,8 @@ class Dispatcher
     /**
      * Attach files to be uploaded.
      *
-     * @param  array  $files
+     * @param array $files
+     *
      * @return \Dingo\Api\Dispatcher
      */
     public function attach(array $files)
@@ -183,7 +209,7 @@ class Dispatcher
                 continue;
             }
 
-            $this->uploadedFiles[$key] = $file;
+            $this->uploads[$key] = $file;
         }
 
         return $this;
@@ -192,16 +218,12 @@ class Dispatcher
     /**
      * Internal request will be authenticated as the given user.
      *
-     * @param  \Illuminate\Auth\GenericUser|\Illuminate\Database\Eloquent\Model  $user
+     * @param mixed $user
+     *
      * @return \Dingo\Api\Dispatcher
-     * @throws \RuntimeException
      */
     public function be($user)
     {
-        if (! $user instanceof Model && ! $user instanceof GenericUser) {
-            throw new RuntimeException('User must be an instance of either Illuminate\Database\Eloquent\Model or Illuminate\Auth\GenericUser.');
-        }
-
         $this->auth->setUser($user);
 
         return $this;
@@ -210,7 +232,8 @@ class Dispatcher
     /**
      * Send a JSON payload in the request body.
      *
-     * @param  string|array  $content
+     * @param string|array $content
+     *
      * @return \Dingo\Api\Dispatcher
      */
     public function json($content)
@@ -227,7 +250,8 @@ class Dispatcher
     /**
      * Sets the domain to be used for the request.
      *
-     * @param  string  $domain
+     * @param string $domain
+     *
      * @return \Dingo\Api\Dispatcher
      */
     public function on($domain)
@@ -264,7 +288,8 @@ class Dispatcher
     /**
      * Set the version of the API for the next request.
      *
-     * @param  string  $version
+     * @param string $version
+     *
      * @return \Dingo\Api\Dispatcher
      */
     public function version($version)
@@ -277,7 +302,8 @@ class Dispatcher
     /**
      * Set the parameters to be sent on the next API request.
      *
-     * @param  string|array  $parameters
+     * @param string|array $parameters
+     *
      * @return \Dingo\Api\Dispatcher
      */
     public function with($parameters)
@@ -290,8 +316,9 @@ class Dispatcher
     /**
      * Set a header to be sent on the next API request.
      *
-     * @param  string  $key
-     * @param  string  $value
+     * @param string $key
+     * @param string $value
+     *
      * @return \Dingo\Api\Dispatcher
      */
     public function header($key, $value)
@@ -302,44 +329,25 @@ class Dispatcher
     }
 
     /**
-     * Perform an API request to a named route.
+     * Set a cookie to be sent on the next API request.
      *
-     * @param  string  $name
-     * @param  string|array  $parameters
-     * @param  string|array  $requestParameters
-     * @return mixed
-     */
-    public function route($name, $parameters = [], $requestParameters = [])
-    {
-        $version = $this->version ?: $this->config->getVersion();
-
-        $route = $this->router->getApiGroups()->getByDomainOrVersion($this->domain, $version)->getByName($name);
-
-        return $this->queueRouteOrActionRequest($route, $name, $parameters, $requestParameters);
-    }
-
-    /**
-     * Perform an API request to a controller action.
+     * @param \Symfony\Component\HttpFoundation\Cookie $cookie
      *
-     * @param  string  $action
-     * @param  string|array  $parameters
-     * @param  string|array  $requestParameters
-     * @return mixed
+     * @return \Dingo\Api\Dispatcher
      */
-    public function action($action, $parameters = [], $requestParameters = [])
+    public function cookie(Cookie $cookie)
     {
-        $version = $this->version ?: $this->config->getVersion();
+        $this->cookies[] = $cookie;
 
-        $route = $this->router->getApiGroups()->getByDomainOrVersion($this->domain, $version)->getByAction($action);
-
-        return $this->queueRouteOrActionRequest($route, $action, $parameters, $requestParameters);
+        return $this;
     }
 
     /**
      * Perform API GET request.
      *
-     * @param  string  $uri
-     * @param  string|array  $parameters
+     * @param string       $uri
+     * @param string|array $parameters
+     *
      * @return mixed
      */
     public function get($uri, $parameters = [])
@@ -350,9 +358,10 @@ class Dispatcher
     /**
      * Perform API POST request.
      *
-     * @param  string  $uri
-     * @param  string|array  $parameters
-     * @param  string  $content
+     * @param string       $uri
+     * @param string|array $parameters
+     * @param string       $content
+     *
      * @return mixed
      */
     public function post($uri, $parameters = [], $content = '')
@@ -363,9 +372,10 @@ class Dispatcher
     /**
      * Perform API PUT request.
      *
-     * @param  string  $uri
-     * @param  string|array  $parameters
-     * @param  string  $content
+     * @param string       $uri
+     * @param string|array $parameters
+     * @param string       $content
+     *
      * @return mixed
      */
     public function put($uri, $parameters = [], $content = '')
@@ -376,9 +386,10 @@ class Dispatcher
     /**
      * Perform API PATCH request.
      *
-     * @param  string  $uri
-     * @param  string|array  $parameters
-     * @param  string  $content
+     * @param string       $uri
+     * @param string|array $parameters
+     * @param string       $content
+     *
      * @return mixed
      */
     public function patch($uri, $parameters = [], $content = '')
@@ -389,9 +400,10 @@ class Dispatcher
     /**
      * Perform API DELETE request.
      *
-     * @param  string  $uri
-     * @param  string|array  $parameters
-     * @param  string  $content
+     * @param string       $uri
+     * @param string|array $parameters
+     * @param string       $content
+     *
      * @return mixed
      */
     public function delete($uri, $parameters = [], $content = '')
@@ -400,82 +412,74 @@ class Dispatcher
     }
 
     /**
-     * Queue up and dispatch a new request to a route name or action.
-     *
-     * @param  \Dingo\Api\Routing\Route  $route
-     * @param  string  $name
-     * @param  string|array  $parameters
-     * @param  string|array  $requestParameters
-     * @return mixed
-     */
-    protected function queueRouteOrActionRequest($route, $name, $parameters, $requestParameters)
-    {
-        $uri = ltrim($this->url->route($name, $parameters, false, $route), '/');
-
-        return $this->queueRequest($route->methods()[0], $uri, $requestParameters);
-    }
-
-    /**
      * Queue up and dispatch a new request.
      *
-     * @param  string  $verb
-     * @param  string  $uri
-     * @param  string|array  $parameters
-     * @param  string  $content
+     * @param string       $verb
+     * @param string       $uri
+     * @param string|array $parameters
+     * @param string       $content
+     *
      * @return mixed
      */
     protected function queueRequest($verb, $uri, $parameters, $content = '')
     {
-        if ($content != '') {
+        if (! empty($content)) {
             $this->content = $content;
         }
 
-        $this->container['request'] = $this->requestStack[] = $this->createRequest($verb, $uri, $parameters);
+        $this->requestStack[] = $request = $this->createRequest($verb, $uri, $parameters);
 
-        return $this->dispatch($this->container['request']);
+        return $this->dispatch($request);
     }
 
     /**
      * Create a new internal request from an HTTP verb and URI.
      *
-     * @param  string  $verb
-     * @param  string  $uri
-     * @param  string|array  $parameters
+     * @param string       $verb
+     * @param string       $uri
+     * @param string|array $parameters
+     *
      * @return \Dingo\Api\Http\InternalRequest
      */
     protected function createRequest($verb, $uri, $parameters)
     {
-        if (! isset($this->version)) {
-            $this->version = $this->config->getVersion();
-        }
-
-        $groups = $this->router->getApiGroups();
-
-        if (isset($this->domain)) {
-            $api = $groups->getByDomain($this->domain, $this->version);
-        } else {
-            $api = $groups->getByVersion($this->version);
-        }
-
-        if (($prefix = $api->option('prefix')) && ! starts_with($uri, $prefix)) {
-            $uri = sprintf('%s/%s', $prefix, $uri);
-        }
-
         $parameters = array_merge($this->parameters, (array) $parameters);
 
-        $request = InternalRequest::create($uri, $verb, $parameters, [], $this->uploadedFiles, [], $this->content);
+        $uri = $this->addPrefixToUri($uri);
 
-        if ($domain = $api->option('domain')) {
-            $request->headers->set('host', $domain);
-        }
+        $request = InternalRequest::create($uri, $verb, $parameters, $this->cookies, $this->uploads, [], $this->content);
+
+        $request->headers->set('host', $this->getDomain());
 
         foreach ($this->headers as $header => $value) {
             $request->headers->set($header, $value);
         }
 
-        $request->headers->set('accept', $this->buildAcceptHeader());
+        $request->headers->set('accept', $this->getAcceptHeader());
 
         return $request;
+    }
+
+    /**
+     * Add the prefix to the URI.
+     *
+     * @param string $uri
+     *
+     * @return string
+     */
+    protected function addPrefixToUri($uri)
+    {
+        if (! isset($this->prefix)) {
+            return $uri;
+        }
+
+        $uri = trim($uri, '/');
+
+        if (starts_with($uri, $this->prefix)) {
+            return $uri;
+        }
+
+        return rtrim('/'.trim($this->prefix, '/').'/'.$uri, '/');
     }
 
     /**
@@ -483,27 +487,33 @@ class Dispatcher
      *
      * @return string
      */
-    protected function buildAcceptHeader()
+    protected function getAcceptHeader()
     {
-        return sprintf('application/vnd.%s.%s+%s', $this->config->getVendor(), $this->version, $this->config->getFormat());
+        return sprintf('application/vnd.%s.%s+%s', $this->getVendor(), $this->getVersion(), $this->getFormat());
     }
 
     /**
      * Attempt to dispatch an internal request.
      *
-     * @param  \Dingo\Api\Http\InternalRequest  $request
-     * @return mixed
+     * @param \Dingo\Api\Http\InternalRequest $request
+     *
      * @throws \Exception|\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface
+     *
+     * @return mixed
      */
     protected function dispatch(InternalRequest $request)
     {
         $this->routeStack[] = $this->router->getCurrentRoute();
 
+        $this->clearCachedFacadeInstance();
+
         try {
-            $response = $this->router->dispatch($request, $this->raw);
+            $this->container['request'] = $request;
+
+            $response = $this->router->dispatch($request);
 
             if (! $response->isSuccessful()) {
-                throw new HttpException($response->getStatusCode(), $response->getOriginalContent());
+                throw new InternalHttpException($response);
             } elseif (! $this->raw) {
                 $response = $response->getOriginalContent();
             }
@@ -519,9 +529,11 @@ class Dispatcher
     }
 
     /**
-     * Refresh the request stack by resetting the authentication,
-     * popping the last request from the stack, replacing the
-     * input, and resetting the version and parameters.
+     * Refresh the request stack.
+     *
+     * This is done by resetting the authentication, popping
+     * the last request from the stack, replacing the input,
+     * and resetting the version and parameters.
      *
      * @return void
      */
@@ -539,11 +551,13 @@ class Dispatcher
 
         $this->replaceRequestInstance();
 
+        $this->clearCachedFacadeInstance();
+
         $this->raw = false;
 
         $this->version = $this->domain = $this->content = null;
 
-        $this->parameters = $this->uploadedFiles = [];
+        $this->parameters = $this->uploads = [];
     }
 
     /**
@@ -555,13 +569,119 @@ class Dispatcher
     {
         array_pop($this->requestStack);
 
-        $this->container['request'] = end($this->requestStack);
+        $this->container->instance('request', end($this->requestStack));
+    }
 
-        $this->router->setCurrentRequest($this->container['request']);
-
+    /**
+     * Clear the cached facade instance.
+     *
+     * @return void
+     */
+    protected function clearCachedFacadeInstance()
+    {
         // Facades cache the resolved instance so we need to clear out the
         // request instance that may have been cached. Otherwise we'll
         // may get unexpected results.
         RequestFacade::clearResolvedInstance('request');
+    }
+
+    /**
+     * Get the domain.
+     *
+     * @return string
+     */
+    public function getDomain()
+    {
+        return $this->domain ?: $this->defaultDomain;
+    }
+
+    /**
+     * Get the version.
+     *
+     * @return string
+     */
+    public function getVersion()
+    {
+        return $this->version ?: $this->defaultVersion;
+    }
+
+    /**
+     * Get the format.
+     *
+     * @return string
+     */
+    public function getFormat()
+    {
+        return $this->defaultFormat;
+    }
+
+    /**
+     * Get the vendor.
+     *
+     * @return string
+     */
+    public function getVendor()
+    {
+        return $this->vendor;
+    }
+
+    /**
+     * Set the vendor.
+     *
+     * @param string $vendor
+     *
+     * @return void
+     */
+    public function setVendor($vendor)
+    {
+        $this->vendor = $vendor;
+    }
+
+    /**
+     * Set the prefix.
+     *
+     * @param string $prefix
+     *
+     * @return void
+     */
+    public function setPrefix($prefix)
+    {
+        $this->prefix = $prefix;
+    }
+
+    /**
+     * Set the default version.
+     *
+     * @param string $version
+     *
+     * @return void
+     */
+    public function setDefaultVersion($version)
+    {
+        $this->defaultVersion = $version;
+    }
+
+    /**
+     * Set the default domain.
+     *
+     * @param string $domain
+     *
+     * @return void
+     */
+    public function setDefaultDomain($domain)
+    {
+        $this->defaultDomain = $domain;
+    }
+
+    /**
+     * Set the defult format.
+     *
+     * @param string $format
+     *
+     * @return void
+     */
+    public function setDefaultFormat($format)
+    {
+        $this->defaultFormat = $format;
     }
 }

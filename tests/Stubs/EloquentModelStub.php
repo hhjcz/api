@@ -6,11 +6,10 @@ use Illuminate\Database\Eloquent\Model;
 
 class EloquentModelStub extends Model
 {
-    protected $table = 'app_user';
+    protected $table = 'foo_bar';
 
     public function toArray()
     {
         return ['foo' => 'bar'];
     }
-
 }

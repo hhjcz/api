@@ -3,451 +3,269 @@
 namespace Dingo\Api\Tests\Routing;
 
 use Mockery as m;
-use Dingo\Api\Config;
-use Illuminate\Http\Request;
-use Dingo\Api\Http\Response;
+use Dingo\Api\Http;
 use Dingo\Api\Routing\Router;
 use PHPUnit_Framework_TestCase;
-use Illuminate\Events\Dispatcher;
-use Dingo\Api\Http\ResponseBuilder;
+use Illuminate\Container\Container;
 use Dingo\Api\Http\InternalRequest;
 use Dingo\Api\Exception\ResourceException;
-use Dingo\Api\Http\ResponseFormat\JsonResponseFormat;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
-class RouterTest extends PHPUnit_Framework_TestCase
+class RouterTest extends Adapter\BaseAdapterTest
 {
-    public function setUp()
+    public function getAdapterInstance()
     {
-        $this->events = new Dispatcher;
-        $this->config = new Config('v1', null, null, 'testing', 'json', false);
-
-        $this->router = new Router($this->events, $this->config);
-
-        Response::setFormatters(['json' => new JsonResponseFormat]);
+        return $this->container->make('Dingo\Api\Tests\Stubs\RoutingAdapterStub');
     }
 
-
-    public function tearDown()
+    public function testRouteOptionsMergeCorrectly()
     {
-        m::close();
+        $this->router->version('v1', ['protected' => true, 'scopes' => 'foo|bar'], function () {
+            $this->router->get('foo', ['scopes' => ['baz'], function () {
+                $this->assertTrue(
+                    $this->router->getCurrentRoute()->isProtected(),
+                    'Route was not protected but should be.'
+                );
+                $this->assertEquals(
+                    ['foo', 'bar', 'baz'],
+                    $this->router->getCurrentRoute()->getScopes(),
+                    'Router did not merge string based group scopes with route based array scopes.'
+                );
+            }]);
+
+            $this->router->get('bar', ['protected' => false, function () {
+                $this->assertFalse(
+                    $this->router->getCurrentRoute()->isProtected(),
+                    'Route was protected but should not be.'
+                );
+            }]);
+
+            $this->router->get('baz', ['protected' => false, function () {
+                $this->assertEquals(
+                    ['foo', 'bar'],
+                    $this->router->getCurrentRoute()->getScopes(),
+                    'Router did not merge string based group scopes with route.'
+                );
+            }]);
+        });
+
+        $request = $this->createRequest('foo', 'GET', ['accept' => 'application/vnd.api.v1+json']);
+        $this->router->dispatch($request);
+
+        $request = $this->createRequest('bar', 'GET', ['accept' => 'application/vnd.api.v1+json']);
+        $this->router->dispatch($request);
+
+        $request = $this->createRequest('baz', 'GET', ['accept' => 'application/vnd.api.v1+json']);
+        $this->router->dispatch($request);
+
+        $this->router->version('v2', ['providers' => 'foo', 'throttle' => 'Bar', 'namespace' => 'Dingo\Api\Tests'], function () {
+            $this->router->get('foo', 'Stubs\RoutingControllerStub@index');
+        });
+
+        $request = $this->createRequest('foo', 'GET', ['accept' => 'application/vnd.api.v2+json']);
+        $this->router->dispatch($request);
+
+        $route = $this->router->getCurrentRoute();
+
+        $this->assertEquals(['baz', 'bing'], $route->scopes());
+        $this->assertEquals(['foo', 'red', 'black'], $route->getAuthProviders());
+        $this->assertTrue($route->isProtected());
+        $this->assertEquals(10, $route->getRateLimit());
+        $this->assertEquals(20, $route->getRateExpiration());
+        $this->assertEquals('Zippy', $route->getThrottle());
     }
-
-
-    public function testRegisteringApiRoutes()
-    {
-        $this->router->api(['version' => 'v1'], function () {
-            $this->router->get('foo', function () {
-                return 'bar';
-            });
-        });
-
-        $this->router->api('v2', function () {
-            $this->router->get('foo', function () {
-                return 'bar';
-            });
-        });
-
-        $this->assertInstanceOf('Dingo\Api\Routing\RouteCollection', $this->router->getApiGroups()->getByVersion('v1'));
-        $this->assertInstanceOf('Dingo\Api\Routing\RouteCollection', $this->router->getApiGroups()->getByVersion('v2'));
-    }
-
-
-    public function testRegisterApiRoutesWithMultipleVersions()
-    {
-        $this->router->api(['version' => ['v1', 'v2']], function () {
-            $this->router->get('foo', function () {
-                return 'foo';
-            });
-        });
-
-        $this->router->api(['version' => 'v2'], function () {
-            $this->router->get('bar', function () {
-                return 'bar';
-            });
-        });
-
-        $request = Request::create('foo', 'GET');
-        $request->headers->set('accept', 'application/vnd.testing.v2+json');
-        $this->assertEquals('foo', $this->router->dispatch($request)->getContent());
-
-        $request = Request::create('bar', 'GET');
-        $request->headers->set('accept', 'application/vnd.testing.v2+json');
-        $this->assertEquals('bar', $this->router->dispatch($request)->getContent());
-    }
-
-
-    public function testRegisterApiRoutesWithDifferentResponseForSameUri()
-    {
-        $this->router->api(['version' => 'v1'], function () {
-            $this->router->get('foo', function () {
-                return 'foo';
-            });
-        });
-
-        $this->router->api(['version' => 'v2'], function () {
-            $this->router->get('foo', function () {
-                return 'bar';
-            });
-        });
-
-        $request = Request::create('foo', 'GET');
-        $request->headers->set('accept', 'application/vnd.testing.v1+json');
-        $this->assertEquals('foo', $this->router->dispatch($request)->getContent());
-
-        $request->headers->set('accept', 'application/vnd.testing.v2+json');
-        $this->assertEquals('bar', $this->router->dispatch($request)->getContent());
-    }
-
-
-    public function testApiRouteCollectionOptionsApplyToRoutes()
-    {
-        $this->router->api(['version' => 'v1', 'protected' => true], function () {
-            $this->router->get('foo', function () {
-                return 'bar';
-            });
-        });
-
-        $route = $this->router->getApiGroups()->getByVersion('v1')->getRoutes()[0];
-        $this->assertTrue($route->getAction()['protected']);
-    }
-
 
     /**
-     * @expectedException BadMethodCallException
+     * @expectedException RuntimeException
+     * @expectedMessage A version is required for an API group definition.
      */
-    public function testRegisteringApiRouteGroupWithoutVersionThrowsException()
+    public function testNoGroupVersionThrowsException()
     {
-        $this->router->api([], function () {});
+        $this->router->group([], function () {
+            //
+        });
     }
 
-
-    public function testApiRoutesWithPrefix()
+    public function testRouterPreparesNotModifiedResponse()
     {
-        $this->router->api(['version' => 'v1', 'prefix' => 'foo/bar'], function () {
-            $this->router->get('foo', function () {
-                return 'foo';
-            });
-        });
-
-        $this->router->api(['version' => 'v2', 'prefix' => 'foo/bar'], function () {
+        $this->router->version('v1', function () {
             $this->router->get('foo', function () {
                 return 'bar';
             });
         });
 
-        $request = Request::create('/foo/bar/foo', 'GET');
-        $request->headers->set('accept', 'application/vnd.testing.v2+json');
-        $this->assertEquals('bar', $this->router->dispatch($request)->getContent());
-    }
-
-
-    public function testApiRoutesWithDomains()
-    {
-        $this->router->api(['version' => 'v1', 'domain' => 'foo.bar'], function () {
-            $this->router->get('foo', function () {
-                return 'foo';
-            });
-        });
-
-        $this->router->api(['version' => 'v2', 'domain' => 'foo.bar'], function () {
-            $this->router->get('foo', function () {
-                return 'bar';
-            });
-        });
-
-        $request = Request::create('http://foo.bar/foo', 'GET');
-        $request->headers->set('accept', 'application/vnd.testing.v2+json');
-        $this->assertEquals('bar', $this->router->dispatch($request)->getContent());
-    }
-
-
-    public function testRouterDispatchesInternalRequests()
-    {
-        $this->router->api(['version' => 'v1'], function () {
-            $this->router->get('foo', function () {
-                return 'foo';
-            });
-        });
-
-        $request = InternalRequest::create('foo', 'GET');
-        $request->headers->set('accept', 'application/vnd.testing.v1+json');
-        $this->assertEquals('foo', $this->router->dispatch($request)->getContent());
-    }
-
-
-    public function testAddingRouteFallsThroughToRouterCollection()
-    {
-        $this->router->get('foo', function () {
-            return 'foo';
-        });
-
-        $this->assertCount(1, $this->router->getRoutes());
-    }
-
-
-    public function testRouterPreparesNotModifiedIlluminateResponse()
-    {
-        $this->router->api(['version' => 'v1'], function () {
-            $this->router->get('foo', function () { return 'bar'; });
-        });
-
-        $request = Request::create('foo', 'GET');
-        $request->headers->set('accept', 'application/vnd.testing.v1+json');
         $this->router->setConditionalRequest(false);
-        $response = $this->router->dispatch($request);
+
+        $response = $this->router->dispatch(
+            $request = $this->createRequest('foo', 'GET', ['accept' => 'application/vnd.api.v1+json'])
+        );
+
         $this->assertEquals(200, $response->getStatusCode());
         $this->assertEquals('bar', $response->getContent());
 
-        $request = Request::create('foo', 'GET');
-        $request->headers->set('accept', 'application/vnd.testing.v1+json');
         $this->router->setConditionalRequest(true);
+
         $response = $this->router->dispatch($request);
+
         $this->assertEquals(200, $response->getStatusCode());
         $this->assertEquals('"'.md5('bar').'"', $response->getETag());
         $this->assertEquals('bar', $response->getContent());
 
-        $request = Request::create('foo', 'GET');
-        $request->headers->set('If-None-Match', '"'.md5('bar').'"', true);
-        $request->headers->set('accept', 'application/vnd.testing.v1+json');
-        $this->router->setConditionalRequest(true);
+        $request = $this->createRequest('foo', 'GET', [
+            'if-none-match' => '"'.md5('bar').'"',
+            'accept' => 'application/vnd.api.v1+json'
+        ]);
+
         $response = $this->router->dispatch($request);
+
         $this->assertEquals(304, $response->getStatusCode());
         $this->assertEquals('"'.md5('bar').'"', $response->getETag());
         $this->assertEquals(null, $response->getContent());
 
-        $request = Request::create('foo', 'GET');
-        $request->headers->set('If-None-Match', '0123456789', true);
-        $request->headers->set('accept', 'application/vnd.testing.v1+json');
-        $this->router->setConditionalRequest(true);
+        $request = $this->createRequest('foo', 'GET', [
+            'if-none-match' => '123456789',
+            'accept' => 'application/vnd.api.v1+json'
+        ]);
+
         $response = $this->router->dispatch($request);
+
         $this->assertEquals(200, $response->getStatusCode());
         $this->assertEquals('"'.md5('bar').'"', $response->getETag());
         $this->assertEquals('bar', $response->getContent());
     }
-
-
-    public function testRouterSkipNotModifiedResponseOutsideApi()
-    {
-        $this->router->group([], function () {
-            $this->router->get('foo', function () {
-                return 'bar';
-            });
-        });
-
-        $request = Request::create('foo', 'GET');
-        $this->router->setConditionalRequest(true);
-        $response = $this->router->dispatch($request);
-        $this->assertEquals(200, $response->getStatusCode());
-        $this->assertFalse($response->headers->has('ETag'));
-        $this->assertEquals('bar', $response->getContent());
-    }
-
 
     public function testRouterHandlesExistingEtag()
     {
-        $this->router->api(['version' => 'v1', 'conditional_request' => true], function () {
+        $this->router->version('v1', ['conditional_request' => true], function () {
             $this->router->get('foo', function () {
-                $response = new Response('bar');
+                $response = new Http\Response('bar');
                 $response->setEtag('custom-etag');
 
                 return $response;
             });
         });
 
-        $request = Request::create('foo', 'GET');
-        $request->headers->set('accept', 'application/vnd.testing.v1+json');
-        $response = $this->router->dispatch($request);
+        $response = $this->router->dispatch(
+            $this->createRequest('foo', 'GET', ['accept' => 'application/vnd.api.v1+json'])
+        );
+
         $this->assertEquals(200, $response->getStatusCode());
         $this->assertEquals('"custom-etag"', $response->getETag());
         $this->assertEquals('bar', $response->getContent());
     }
 
-
     public function testRouterHandlesCustomEtag()
     {
-        $this->router->api(['version' => 'v1'], function () {
+        $this->router->version('v1', ['conditional_request' => true], function () {
             $this->router->get('foo', function () {
-                $response = new Response('bar');
+                $response = new Http\Response('bar');
                 $response->setEtag('custom-etag');
 
                 return $response;
             });
         });
 
-        $request = Request::create('foo', 'GET');
-        $request->headers->set('If-None-Match', '"custom-etag"', true);
-        $request->headers->set('accept', 'application/vnd.testing.v1+json');
-        $this->router->setConditionalRequest(true);
-        $response = $this->router->dispatch($request);
+        $response = $this->router->dispatch(
+            $this->createRequest('foo', 'GET', [
+                'if-none-match' => '"custom-etag"',
+                'accept' => 'application/vnd.api.v1+json'
+            ])
+        );
+
         $this->assertEquals(304, $response->getStatusCode());
         $this->assertEquals('"custom-etag"', $response->getETag());
         $this->assertEquals(null, $response->getContent());
     }
 
-
-    public function testRouterFiresExceptionEvent()
+    public function testExceptionsAreHandledByExceptionHandler()
     {
-        $exception = new ResourceException;
+        $exception = new HttpException(400);
 
-        $this->router->api(['version' => 'v1'], function () use ($exception) {
+        $this->router->version('v1', function () use ($exception) {
             $this->router->get('foo', function () use ($exception) {
                 throw $exception;
             });
         });
 
-        $this->events->listen('router.exception', function ($exception) {
-            $this->assertInstanceOf('Dingo\Api\Exception\ResourceException', $exception);
+        $this->exception->shouldReceive('handle')->once()->with($exception)->andReturn(new Http\Response('exception'));
 
-            return new \Dingo\Api\Http\Response(null, $exception->getStatusCode());
-        });
+        $request = $this->createRequest('foo', 'GET', ['accept' => 'application/vnd.api.v1+json']);
 
-        $request = Request::create('foo', 'GET');
-        $request->headers->set('accept', 'application/vnd.testing.v1+json');
-        $response = $this->router->dispatch($request);
-        $this->assertEquals(422, $response->getStatusCode());
+        $this->assertEquals('exception', $this->router->dispatch($request)->getContent(), 'Router did not delegate exception handling.');
     }
 
-
-    /**
-     * @expectedException Symfony\Component\HttpKernel\Exception\HttpException
-     */
-    public function testRouterCatchesHttpExceptionsAndRethrowsForInternalRequest()
+    public function testNoAcceptHeaderUsesDefaultVersion()
     {
-        $this->router->api(['version' => 'v1'], function () {
+        $this->router->version('v1', function () {
             $this->router->get('foo', function () {
-                throw new HttpException(404);
+                return 'foo';
             });
         });
 
-        $request = InternalRequest::create('foo', 'GET');
+        $this->assertEquals('foo', $this->router->dispatch($this->createRequest('foo', 'GET'))->getContent(), 'Router does not default to default version.');
+    }
+
+    public function testRoutesAddedToCorrectVersions()
+    {
+        $this->router->version('v1', ['domain' => 'foo.bar'], function () {
+            $this->router->get('foo', function () {
+                return 'bar';
+            });
+        });
+
+        $this->router->version('v2', ['domain' => 'foo.bar'], function () {
+            $this->router->get('bar', function () {
+                return 'baz';
+            });
+        });
+
+        $this->createRequest('/', 'GET');
+
+        $this->assertCount(1, $this->router->getRoutes()['v1'], 'Routes were not added to the correct versions.');
+    }
+
+    public function testUnsuccessfulResponseThrowsHttpException()
+    {
+        $this->router->version('v1', function () {
+            $this->router->get('foo', function () {
+                return new Http\Response('Failed!', 400);
+            });
+        });
+
+        $request = $this->createRequest('foo', 'GET');
+
+        $this->exception->shouldReceive('handle')->with(m::type('Symfony\Component\HttpKernel\Exception\HttpException'))->andReturn(new Http\Response('Failed!'));
+
+        $this->assertEquals('Failed!', $this->router->dispatch($request)->getContent(), 'Router did not throw and handle a HttpException.');
+    }
+
+    public function testRouteMiddlewaresAreUnsetAndMovedIfManuallySetOnRoutes()
+    {
+        $this->router->version('v1', function () {
+            $this->router->get('foo', ['middleware' => 'foo|api.auth', function () use (&$middleware) {
+                $route = $this->router->getCurrentRoute();
+
+                $this->assertEquals(['api.auth', 'api.limiting', 'foo'], $route->getAction()['middleware']);
+
+                return 'foo';
+            }]);
+        });
+
+        $request = $this->createRequest('foo', 'GET');
+
         $this->router->dispatch($request);
     }
 
-
-    public function testRouterIgnoresRouteGroupsWithAnApiPrefix()
+    public function testGroupNamespacesAreConcatenated()
     {
-        $this->router->group(['prefix' => 'api'], function () {
-            $this->router->get('foo', function () {
-                return 'foo';
+        $this->router->version('v1', ['namespace' => 'Dingo\Api'], function () {
+            $this->router->group(['namespace' => 'Tests\Stubs'], function () {
+                $this->router->get('foo', 'RoutingControllerStub@getIndex');
             });
         });
 
-        $request = Request::create('api/foo', 'GET');
-        $this->assertEquals('foo', $this->router->dispatch($request)->getContent());
-    }
+        $request = $this->createRequest('foo', 'GET');
 
-
-    public function testRequestTargettingAnApiWithNoPrefixOrDomain()
-    {
-        $this->router->get('/', function () {
-            return 'foo';
-        });
-
-        $this->router->api(['version' => 'v1'], function () {
-            $this->router->get('foo', function () {
-                return 'bar';
-            });
-        });
-
-        $request = Request::create('/', 'GET');
-        $this->assertFalse($this->router->isApiRequest($request));
-
-        $request = Request::create('foo', 'GET');
-        $this->assertTrue($this->router->isApiRequest($request));
-    }
-
-
-    public function testRequestWithMultipleApisFindsTheCorrectApiRouteCollection()
-    {
-        $this->router->api(['version' => 'v1', 'prefix' => 'api'], function () {
-            $this->router->get('foo', function () {
-                return 'foo';
-            });
-        });
-
-        $this->router->api(['version' => 'v2', 'prefix' => 'api'], function () {
-            $this->router->get('bar', function () {
-                return 'bar';
-            });
-        });
-
-        $request = Request::create('api/bar', 'GET');
-        $request->headers->set('accept', 'application/vnd.testing.v2+json');
-        $this->assertEquals('bar', $this->router->dispatch($request)->getContent());
-    }
-
-
-    public function testApiCollectionsWithPointReleaseVersions()
-    {
-        $this->router->api(['version' => 'v1.1', 'prefix' => 'api'], function () {
-            $this->router->get('foo', function () {
-                return 'foo';
-            });
-        });
-
-        $this->router->api(['version' => 'v2.0.1', 'prefix' => 'api'], function () {
-            $this->router->get('bar', function () {
-                return 'bar';
-            });
-        });
-
-        $request = Request::create('api/foo', 'GET');
-        $request->headers->set('accept', 'application/vnd.testing.v1.1+json');
-        $this->assertEquals('foo', $this->router->dispatch($request)->getContent());
-
-        $request = Request::create('api/bar', 'GET');
-        $request->headers->set('accept', 'application/vnd.testing.v2.0.1+json');
-        $this->assertEquals('bar', $this->router->dispatch($request)->getContent());
-    }
-
-
-    public function testRouterDefaultsToDefaultVersionCollectionWhenNoAcceptHeader()
-    {
-        $this->router->api(['version' => 'v1', 'prefix' => 'api'], function () {
-            $this->router->get('foo', function () {
-                return 'foo';
-            });
-        });
-
-        $this->router->api(['version' => 'v2', 'prefix' => 'api'], function () {
-            $this->router->get('foo', function () {
-                return 'bar';
-            });
-        });
-
-        $this->config->setVersion('v2');
-        $request = Request::create('api/foo', 'GET');
-        $this->assertEquals('bar', $this->router->dispatch($request)->getContent());
-    }
-
-
-    public function testRouterPreparesResponseBuilderResponse()
-    {
-        $request = Request::create('foo', 'GET');
-
-        $this->router->api(['version' => 'v1'], function () {
-            $this->router->get('foo', function () {
-                return new ResponseBuilder('bar');
-            });
-        });
-
-        $this->assertEquals('bar', $this->router->dispatch($request)->getContent());
-    }
-
-
-    /**
-     * @expectedException \Dingo\Api\Exception\InvalidAcceptHeaderException
-     */
-    public function testRouterThrowsExceptionWhenInvalidAcceptHeaderWithStrict()
-    {
-        $this->router->api(['version' => 'v1'], function () {
-            $this->router->get('foo', function () {
-                return 'bar';
-            });
-        });
-
-        $this->router->setStrict(true);
-        $this->router->dispatch(Request::create('foo', 'GET'));
+        $this->assertEquals('foo', $this->router->dispatch($request)->getContent(), 'Router did not concatenate controller namespace correctly.');
     }
 }

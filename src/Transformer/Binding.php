@@ -46,10 +46,11 @@ class Binding
     /**
      * Create a new binding instance.
      *
-     * @param  \Illuminate\Container\Container  $container
-     * @param  mixed  $resolver
-     * @param  array  $parameters
-     * @param  \Closure  $callback
+     * @param \Illuminate\Container\Container $container
+     * @param mixed                           $resolver
+     * @param array                           $parameters
+     * @param \Closure                        $callback
+     *
      * @return void
      */
     public function __construct(Container $container, $resolver, array $parameters = [], Closure $callback = null)
@@ -61,10 +62,11 @@ class Binding
     }
 
     /**
-     * Resolve a transfomer binding instance.
+     * Resolve a transformer binding instance.
+     *
+     * @throws \RuntimeException
      *
      * @return object
-     * @throws \RuntimeException
      */
     public function resolveTransformer()
     {
@@ -82,10 +84,11 @@ class Binding
     /**
      * Fire the binding callback.
      *
-     * @param  string|array  $parameters
+     * @param string|array $parameters
+     *
      * @return void
      */
-    public function fireCallback($parameters)
+    public function fireCallback($parameters = null)
     {
         if (is_callable($this->callback)) {
             call_user_func_array($this->callback, func_get_args());
@@ -105,7 +108,8 @@ class Binding
     /**
      * Set the meta data for the binding.
      *
-     * @param  array  $meta
+     * @param array $meta
+     *
      * @return void
      */
     public function setMeta(array $meta)
@@ -116,8 +120,9 @@ class Binding
     /**
      * Add a meta data key/value pair.
      *
-     * @param  string  $key
-     * @param  mixed  $value
+     * @param string $key
+     * @param mixed  $value
+     *
      * @return void
      */
     public function addMeta($key, $value)

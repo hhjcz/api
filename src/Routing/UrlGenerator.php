@@ -3,80 +3,52 @@
 namespace Dingo\Api\Routing;
 
 use Illuminate\Http\Request;
-use InvalidArgumentException;
-use Illuminate\Support\Collection;
 use Illuminate\Routing\UrlGenerator as IlluminateUrlGenerator;
 
 class UrlGenerator extends IlluminateUrlGenerator
 {
     /**
+     * Array of route collections.
+     *
+     * @var array
+     */
+    protected $collections;
+
+    /**
      * Create a new URL generator instance.
      *
-     * @param  \Illuminate\Support\Collection  $routes
-     * @param  \Illuminate\Http\Request  $request
+     * @param \Dingo\Api\Http\Request $request
+     *
      * @return void
      */
-    public function __construct(Collection $routes, Request $request)
+    public function __construct(Request $request)
     {
-        $this->routes = $routes;
-        $this->request = $request;
+        $this->setRequest($request);
     }
 
     /**
-     * {@inheritDoc}
-     */
-    public function action($action, $parameters = array(), $absolute = true)
-    {
-        return $this->route($action, $parameters, $absolute, $this->getRouteByAction($action));
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    public function route($name, $parameters = array(), $absolute = true, $route = null)
-    {
-        $route = $route ?: $this->getRouteByName($name);
-
-        $parameters = (array) $parameters;
-
-        if (! is_null($route)) {
-            return $this->toRoute($route, $parameters, $absolute);
-        }
-
-        throw new InvalidArgumentException('Route ['.$name.'] not defined.');
-    }
-
-    /**
-     * Get a route by name from either the application routes or API routes.
+     * Set the routes to use from the version.
      *
-     * @param  string  $name
-     * @return \Illuminate\Routing\Route|\Dingo\Api\Routing\Route|null
+     * @param string $version
+     *
+     * @return \Dingo\Api\Routing\UrlGenerator
      */
-    protected function getRouteByName($name)
+    public function version($version)
     {
-        $route = null;
+        $this->routes = $this->collections[$version];
 
-        $this->routes->first(function ($key, $routes) use ($name, &$route) {
-            return $route = $routes->getByName($name);
-        });
-
-        return $route;
+        return $this;
     }
 
     /**
-     * Get a route by name from either the application routes or API routes.
+     * Set the route collection instance.
      *
-     * @param  string  $name
-     * @return \Illuminate\Routing\Route|\Dingo\Api\Routing\Route|null
+     * @param \Dingo\Api\Routing\RouteCollection $collections
+     *
+     * @return void
      */
-    protected function getRouteByAction($action)
+    public function setRouteCollections(array $collections)
     {
-        $route = null;
-
-        $this->routes->first(function ($key, $routes) use ($action, &$route) {
-            return $route = $routes->getByAction($action);
-        });
-
-        return $route;
+        $this->collections = $collections;
     }
 }
