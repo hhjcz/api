@@ -40,7 +40,10 @@
     "autoload": {
         "psr-4": {
             "Dingo\\Api\\": "src"
-        }
+        },
+        "files": [
+            "src/helpers.php"
+        ]
     },
     "autoload-dev": {
         "psr-4": {
@@ -49,7 +52,7 @@
     },
     "extra": {
         "branch-alias": {
-            "dev-master": "0.9-dev"
+            "dev-master": "0.10-dev"
         }
     },
     "minimum-stability": "dev",

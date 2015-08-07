@@ -4,9 +4,9 @@ namespace Dingo\Api\Tests\Http\Middleware;
 
 use Mockery as m;
 use Illuminate\Http\Request;
-use Dingo\Api\Http\Validator;
 use Dingo\Api\Http\Validation;
 use PHPUnit_Framework_TestCase;
+use Dingo\Api\Http\RequestValidator;
 use Dingo\Api\Tests\Stubs\ApplicationStub;
 use Dingo\Api\Http\Parser\Accept as AcceptParser;
 use Dingo\Api\Http\Middleware\Request as RequestMiddleware;
@@ -17,9 +17,12 @@ class RequestTest extends PHPUnit_Framework_TestCase
     {
         $this->app = new ApplicationStub;
         $this->router = m::mock('Dingo\Api\Routing\Router');
-        $this->validator = new Validator($this->app);
+        $this->validator = new RequestValidator($this->app);
+        $this->handler = m::mock('Dingo\Api\Exception\Handler');
 
-        $this->middleware = new RequestMiddleware($this->app, $this->router, $this->validator, []);
+        $this->app->alias('Dingo\Api\Http\Request', 'Dingo\Api\Contract\Http\Request');
+
+        $this->middleware = new RequestMiddleware($this->app, $this->handler, $this->router, $this->validator, []);
     }
 
     public function tearDown()
@@ -91,23 +94,6 @@ class RequestTest extends PHPUnit_Framework_TestCase
 
         $this->middleware->handle($request, function ($handled) use ($request) {
             $this->assertEquals($handled, $request);
-        });
-    }
-
-    /**
-     * @expectedException \Symfony\Component\HttpKernel\Exception\BadRequestHttpException
-     * @expectedMessage Accept header could not be properly parsed because of a strict matching process.
-     */
-    public function testParserThrowsExceptionWhenMatchingStrictAcceptHeader()
-    {
-        $this->app['Dingo\Api\Http\Validation\Domain'] = new Validation\Domain('foo.bar');
-        $this->app['Dingo\Api\Http\Validation\Prefix'] = new Validation\Prefix(null);
-        $this->app['Dingo\Api\Http\Validation\Accept'] = new Validation\Accept(new AcceptParser('api', 'v1', 'json'), true);
-
-        $request = Request::create('http://foo.bar/baz', 'GET');
-
-        $this->middleware->handle($request, function () {
-            //
         });
     }
 }

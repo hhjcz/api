@@ -15,7 +15,6 @@ class Docs extends Command
      *
      * @var \Dingo\Api\Routing\Router
      */
-
     protected $router;
 
     /**
@@ -33,13 +32,27 @@ class Docs extends Command
     protected $writer;
 
     /**
+     * Default documentation name.
+     *
+     * @var string
+     */
+    protected $name;
+
+    /**
+     * Default documentation version.
+     *
+     * @var string
+     */
+    protected $version;
+
+    /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'api:docs {name : The name of the generated documentation}
-                                     {version : Version of the documentation to be generated}
-                                     {--file= : Output the generated documentation to a file}';
+    protected $signature = 'api:docs {--name= : Name of the generated documentation}
+                                     {--use-version= : Version of the documentation to be generated}
+                                     {--output-file= : Output the generated documentation to a file}';
 
     /**
      * The console command description.
@@ -54,16 +67,20 @@ class Docs extends Command
      * @param \Dingo\Api\Routing\Router  $router
      * @param \Dingo\Blueprint\Blueprint $blueprint
      * @param \Dingo\Blueprint\Writer    $writer
+     * @param string                     $name
+     * @param string                     $version
      *
      * @return void
      */
-    public function __construct(Router $router, Blueprint $blueprint, Writer $writer)
+    public function __construct(Router $router, Blueprint $blueprint, Writer $writer, $name, $version)
     {
         parent::__construct();
 
         $this->router = $router;
         $this->blueprint = $blueprint;
         $this->writer = $writer;
+        $this->name = $name;
+        $this->version = $version;
     }
 
     /**
@@ -73,15 +90,51 @@ class Docs extends Command
      */
     public function handle()
     {
-        $contents = $this->blueprint->generate($this->getControllers(), $this->argument('name'), $this->argument('version'));
+        $contents = $this->blueprint->generate($this->getControllers(), $this->getDocName(), $this->getVersion());
 
-        if ($file = $this->option('file')) {
+        if ($file = $this->option('output-file')) {
             $this->writer->write($contents, $file);
 
             return $this->info('Documentation was generated successfully.');
         }
 
         return $this->line($contents);
+    }
+
+    /**
+     * Get the documentation name.
+     *
+     * @return string
+     */
+    protected function getDocName()
+    {
+        $name = $this->option('name') ?: $this->name;
+
+        if (! $name) {
+            $this->comment('A name for the documentation was not supplied. Use the --name option or set a default in the configuration.');
+
+            exit;
+        }
+
+        return $name;
+    }
+
+    /**
+     * Get the documentation version.
+     *
+     * @return string
+     */
+    protected function getVersion()
+    {
+        $version = $this->option('use-version') ?: $this->version;
+
+        if (! $version) {
+            $this->comment('A version for the documentation was not supplied. Use the --use-version option or set a default in the configuration.');
+
+            exit;
+        }
+
+        return $version;
     }
 
     /**
@@ -96,7 +149,7 @@ class Docs extends Command
         foreach ($this->router->getRoutes() as $collections) {
             foreach ($collections as $route) {
                 if ($controller = $route->getController()) {
-                    if (!$controllers->contains($controller)) {
+                    if (! $controllers->contains($controller)) {
                         $controllers->push($controller);
                     }
                 }

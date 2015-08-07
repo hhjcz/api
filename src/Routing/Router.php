@@ -5,6 +5,7 @@ namespace Dingo\Api\Routing;
 use Closure;
 use Exception;
 use RuntimeException;
+use Illuminate\Support\Str;
 use Dingo\Api\Http\Request;
 use Dingo\Api\Http\Response;
 use Dingo\Api\Exception\Handler;
@@ -12,29 +13,12 @@ use Dingo\Api\Http\InternalRequest;
 use Illuminate\Container\Container;
 use Dingo\Api\Contract\Routing\Adapter;
 use Illuminate\Routing\ControllerInspector;
-use Dingo\Api\Exception\InternalHttpException;
 use Dingo\Api\Http\Parser\Accept as AcceptParser;
 use Illuminate\Http\Response as IlluminateResponse;
-use Dingo\Api\Http\Response\Builder as ResponseBuilder;
-use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\HttpKernel\Exception\NotAcceptableHttpException;
 
 class Router
 {
-    /**
-     * Auth middleware identifier.
-     *
-     * @var string
-     */
-    const API_AUTH_MIDDLEWARE = 'api.auth';
-
-    /**
-     * Rate limit middleware identifier.
-     *
-     * @var string
-     */
-    const API_RATE_LIMIT_MIDDLEWARE = 'api.limiting';
-
     /**
      * Routing adapter instance.
      *
@@ -344,7 +328,7 @@ class Router
             foreach ($routes as $route) {
                 $this->{$route['verb']}($route['uri'], [
                     'uses' => $controller.'@'.$method,
-                    'as' => array_get($names, $method)
+                    'as' => array_get($names, $method),
                 ]);
             }
         }
@@ -399,29 +383,7 @@ class Router
 
         $action['uri'] = $uri;
 
-        $action = $this->addRouteMiddlewares($action);
-
         return $this->adapter->addRoute((array) $methods, $action['version'], $uri, $action);
-    }
-
-    /**
-     * Add the route middlewares to the action array.
-     *
-     * @param array $action
-     *
-     * @return array
-     */
-    protected function addRouteMiddlewares(array $action)
-    {
-        foreach ([static::API_RATE_LIMIT_MIDDLEWARE, static::API_AUTH_MIDDLEWARE] as $middleware) {
-            if (($key = array_search($middleware, $action['middleware'])) !== false) {
-                unset($action['middleware'][$key]);
-            }
-
-            array_unshift($action['middleware'], $middleware);
-        }
-
-        return $action;
     }
 
     /**
@@ -529,8 +491,9 @@ class Router
     /**
      * Format the prefix for the new group attributes.
      *
-     * @param  array  $new
-     * @param  array  $old
+     * @param array $new
+     * @param array $old
+     *
      * @return string
      */
     protected function formatPrefix($new, $old)
@@ -575,30 +538,32 @@ class Router
     /**
      * Prepare a response by transforming and formatting it correctly.
      *
-     * @param \Illuminate\Http\Response $response
-     * @param \Dingo\Api\Http\Request   $request
-     * @param string                    $format
-     * @param bool                      $raw
+     * @param mixed                   $response
+     * @param \Dingo\Api\Http\Request $request
+     * @param string                  $format
+     * @param bool                    $raw
      *
      * @return \Dingo\Api\Http\Response
      */
-    protected function prepareResponse(IlluminateResponse $response, Request $request, $format)
+    protected function prepareResponse($response, Request $request, $format)
     {
-        if (! $response instanceof Response) {
+        if ($response instanceof IlluminateResponse) {
             $response = Response::makeFromExisting($response);
         }
 
-        // If we try and get a formatter that does not exist we'll let the exception
-        // handler deal with it. At worst we'll get a generic JSON response that
-        // a consumer can hopefully deal with. Ideally they won't be using
-        // an unsupported format.
-        try {
-            $response->getFormatter($format)->setResponse($response)->setRequest($request);
-        } catch (NotAcceptableHttpException $exception) {
-            return $this->exception->handle($exception);
-        }
+        if ($response instanceof Response) {
+            // If we try and get a formatter that does not exist we'll let the exception
+            // handler deal with it. At worst we'll get a generic JSON response that
+            // a consumer can hopefully deal with. Ideally they won't be using
+            // an unsupported format.
+            try {
+                $response->getFormatter($format)->setResponse($response)->setRequest($request);
+            } catch (NotAcceptableHttpException $exception) {
+                return $this->exception->handle($exception);
+            }
 
-        $response = $response->morph($format);
+            $response = $response->morph($format);
+        }
 
         if ($response->isSuccessful() && $this->requestIsConditional()) {
             if (! $response->headers->has('ETag')) {
@@ -653,12 +618,22 @@ class Router
         if (isset($this->currentRoute)) {
             return $this->currentRoute;
         } elseif (! $this->hasDispatchedRoutes()) {
-            return null;
+            return;
         }
 
         $request = $this->container['request'];
 
         return $this->currentRoute = $this->createRoute($request->route());
+    }
+
+    /**
+     * Get the currently dispatched route instance.
+     *
+     * @return \Illuminate\Routing\Route
+     */
+    public function current()
+    {
+        return $this->getCurrentRoute();
     }
 
     /**
@@ -783,5 +758,91 @@ class Router
     public function hasDispatchedRoutes()
     {
         return $this->routesDispatched > 0;
+    }
+
+    /**
+     * Get the current route name.
+     *
+     * @return string|null
+     */
+    public function currentRouteName()
+    {
+        return $this->current() ? $this->current()->getName() : null;
+    }
+
+    /**
+     * Alias for the "currentRouteNamed" method.
+     *
+     * @param mixed string
+     *
+     * @return bool
+     */
+    public function is()
+    {
+        foreach (func_get_args() as $pattern) {
+            if (Str::is($pattern, $this->currentRouteName())) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Determine if the current route matches a given name.
+     *
+     * @param string $name
+     *
+     * @return bool
+     */
+    public function currentRouteNamed($name)
+    {
+        return $this->current() ? $this->current()->getName() == $name : false;
+    }
+
+    /**
+     * Get the current route action.
+     *
+     * @return string|null
+     */
+    public function currentRouteAction()
+    {
+        if (! $route = $this->current()) {
+            return;
+        }
+
+        $action = $route->getAction();
+
+        return isset($action['controller']) ? $action['controller'] : null;
+    }
+
+    /**
+     * Alias for the "currentRouteUses" method.
+     *
+     * @param  mixed  string
+     *
+     * @return bool
+     */
+    public function uses()
+    {
+        foreach (func_get_args() as $pattern) {
+            if (Str::is($pattern, $this->currentRouteAction())) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Determine if the current route action matches a given action.
+     *
+     * @param string $action
+     *
+     * @return bool
+     */
+    public function currentRouteUses($action)
+    {
+        return $this->currentRouteAction() == $action;
     }
 }

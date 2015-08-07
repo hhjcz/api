@@ -7,9 +7,16 @@ use Mockery as m;
 use Dingo\Api\Http\Response;
 use PHPUnit_Framework_TestCase;
 use Dingo\Api\Transformer\Binding;
+use Dingo\Api\Http\Response\Format\Json;
+use Illuminate\Events\Dispatcher as EventDispatcher;
 
 class ResponseTest extends PHPUnit_Framework_TestCase
 {
+    public function setUp()
+    {
+        Response::setEventDispatcher($this->events = new EventDispatcher);
+    }
+
     public function tearDown()
     {
         m::close();
@@ -54,5 +61,35 @@ class ResponseTest extends PHPUnit_Framework_TestCase
 
         $this->assertEquals('Bar', $response->headers->get('Foo'));
         $this->assertEquals(302, $response->getStatusCode());
+    }
+
+    public function testChangingContentWithEvents()
+    {
+        $this->events->listen('Dingo\Api\Event\ResponseWasMorphed', function ($event) {
+            $event->content['foo'] = 'bam!';
+        });
+
+        Response::addFormatter('json', new Json);
+
+        $response = new Response(['foo' => 'bar']);
+
+        $this->assertEquals('{"foo":"bam!"}', $response->morph('json')->getContent());
+
+        $this->events->forget('Dingo\Api\Event\ResponseWasMorphed');
+    }
+
+    public function testChangingResponseHeadersWithEvents()
+    {
+        $this->events->listen('Dingo\Api\Event\ResponseIsMorphing', function ($event) {
+            $event->response->headers->set('x-foo', 'bar');
+        });
+
+        Response::addFormatter('json', new Json);
+
+        $response = new Response(['foo' => 'bar']);
+
+        $this->assertEquals('bar', $response->morph('json')->headers->get('x-foo'));
+
+        $this->events->forget('Dingo\Api\Event\ResponseIsMorphing');
     }
 }

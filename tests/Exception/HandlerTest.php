@@ -23,7 +23,7 @@ class HandlerTest extends PHPUnit_Framework_TestCase
             'errors' => ':errors',
             'code' => ':code',
             'status_code' => ':status_code',
-            'debug' => ':debug'
+            'debug' => ':debug',
         ], false);
     }
 
@@ -82,8 +82,8 @@ class HandlerTest extends PHPUnit_Framework_TestCase
                 'errors' => ':errors',
                 'code' => ':code',
                 'status_code' => ':status_code',
-                'debug' => ':debug'
-            ]
+                'debug' => ':debug',
+            ],
         ]);
 
         $response = $this->exceptionHandler->handle(new HttpException(404, 'bar'));
@@ -140,15 +140,14 @@ class HandlerTest extends PHPUnit_Framework_TestCase
         $this->assertEquals('foo', $this->exceptionHandler->render($request, $exception));
     }
 
-    /**
-     * @expectedException \Symfony\Component\HttpKernel\Exception\HttpException
-     */
-    public function testApiRequestsRethrowExceptions()
+    public function testExceptionsHandledByRenderAreReroutedThroughHandler()
     {
         $request = ApiRequest::create('foo', 'GET');
         $exception = new HttpException(404);
 
-        $this->exceptionHandler->render($request, $exception);
+        $response = $this->exceptionHandler->render($request, $exception);
+
+        $this->assertEquals('{"message":"404 Not Found","status_code":404}', $response->getContent());
     }
 
     public function testSettingUserDefinedReplacements()

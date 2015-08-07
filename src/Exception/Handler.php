@@ -6,7 +6,7 @@ use Exception;
 use ReflectionFunction;
 use Dingo\Api\Http\Request;
 use Illuminate\Http\Response;
-use Dingo\Api\Contract\Exception\Handler as ExceptionHandler;
+use Dingo\Api\Contract\Debug\ExceptionHandler;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Illuminate\Contracts\Debug\ExceptionHandler as IlluminateExceptionHandler;
 
@@ -75,7 +75,6 @@ class Handler implements ExceptionHandler, IlluminateExceptionHandler
         return $this->parent->report($exception);
     }
 
-
     /**
      * Render an exception into an HTTP response.
      *
@@ -89,7 +88,7 @@ class Handler implements ExceptionHandler, IlluminateExceptionHandler
     public function render($request, Exception $exception)
     {
         if ($request instanceof Request) {
-            throw $exception;
+            return $this->handle($exception);
         }
 
         return $this->parent->render($request, $exception);
@@ -215,7 +214,7 @@ class Handler implements ExceptionHandler, IlluminateExceptionHandler
 
         $replacements = [
             ':message' => $message,
-            ':status_code' => $statusCode
+            ':status_code' => $statusCode,
         ];
 
         if ($exception instanceof ResourceException && $exception->hasErrors()) {
@@ -231,7 +230,7 @@ class Handler implements ExceptionHandler, IlluminateExceptionHandler
                 'line' => $exception->getLine(),
                 'file' => $exception->getFile(),
                 'class' => get_class($exception),
-                'trace' => explode("\n", $exception->getTraceAsString())
+                'trace' => explode("\n", $exception->getTraceAsString()),
             ];
         }
 

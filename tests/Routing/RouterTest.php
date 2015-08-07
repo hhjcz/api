@@ -5,10 +5,7 @@ namespace Dingo\Api\Tests\Routing;
 use Mockery as m;
 use Dingo\Api\Http;
 use Dingo\Api\Routing\Router;
-use PHPUnit_Framework_TestCase;
 use Illuminate\Container\Container;
-use Dingo\Api\Http\InternalRequest;
-use Dingo\Api\Exception\ResourceException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class RouterTest extends Adapter\BaseAdapterTest
@@ -20,12 +17,8 @@ class RouterTest extends Adapter\BaseAdapterTest
 
     public function testRouteOptionsMergeCorrectly()
     {
-        $this->router->version('v1', ['protected' => true, 'scopes' => 'foo|bar'], function () {
+        $this->router->version('v1', ['scopes' => 'foo|bar'], function () {
             $this->router->get('foo', ['scopes' => ['baz'], function () {
-                $this->assertTrue(
-                    $this->router->getCurrentRoute()->isProtected(),
-                    'Route was not protected but should be.'
-                );
                 $this->assertEquals(
                     ['foo', 'bar', 'baz'],
                     $this->router->getCurrentRoute()->getScopes(),
@@ -33,26 +26,16 @@ class RouterTest extends Adapter\BaseAdapterTest
                 );
             }]);
 
-            $this->router->get('bar', ['protected' => false, function () {
-                $this->assertFalse(
-                    $this->router->getCurrentRoute()->isProtected(),
-                    'Route was protected but should not be.'
-                );
-            }]);
-
-            $this->router->get('baz', ['protected' => false, function () {
+            $this->router->get('baz', function () {
                 $this->assertEquals(
                     ['foo', 'bar'],
                     $this->router->getCurrentRoute()->getScopes(),
                     'Router did not merge string based group scopes with route.'
                 );
-            }]);
+            });
         });
 
         $request = $this->createRequest('foo', 'GET', ['accept' => 'application/vnd.api.v1+json']);
-        $this->router->dispatch($request);
-
-        $request = $this->createRequest('bar', 'GET', ['accept' => 'application/vnd.api.v1+json']);
         $this->router->dispatch($request);
 
         $request = $this->createRequest('baz', 'GET', ['accept' => 'application/vnd.api.v1+json']);
@@ -69,7 +52,6 @@ class RouterTest extends Adapter\BaseAdapterTest
 
         $this->assertEquals(['baz', 'bing'], $route->scopes());
         $this->assertEquals(['foo', 'red', 'black'], $route->getAuthProviders());
-        $this->assertTrue($route->isProtected());
         $this->assertEquals(10, $route->getRateLimit());
         $this->assertEquals(20, $route->getRateExpiration());
         $this->assertEquals('Zippy', $route->getThrottle());
@@ -113,7 +95,7 @@ class RouterTest extends Adapter\BaseAdapterTest
 
         $request = $this->createRequest('foo', 'GET', [
             'if-none-match' => '"'.md5('bar').'"',
-            'accept' => 'application/vnd.api.v1+json'
+            'accept' => 'application/vnd.api.v1+json',
         ]);
 
         $response = $this->router->dispatch($request);
@@ -124,7 +106,7 @@ class RouterTest extends Adapter\BaseAdapterTest
 
         $request = $this->createRequest('foo', 'GET', [
             'if-none-match' => '123456789',
-            'accept' => 'application/vnd.api.v1+json'
+            'accept' => 'application/vnd.api.v1+json',
         ]);
 
         $response = $this->router->dispatch($request);
@@ -168,7 +150,7 @@ class RouterTest extends Adapter\BaseAdapterTest
         $response = $this->router->dispatch(
             $this->createRequest('foo', 'GET', [
                 'if-none-match' => '"custom-etag"',
-                'accept' => 'application/vnd.api.v1+json'
+                'accept' => 'application/vnd.api.v1+json',
             ])
         );
 
@@ -239,23 +221,6 @@ class RouterTest extends Adapter\BaseAdapterTest
         $this->assertEquals('Failed!', $this->router->dispatch($request)->getContent(), 'Router did not throw and handle a HttpException.');
     }
 
-    public function testRouteMiddlewaresAreUnsetAndMovedIfManuallySetOnRoutes()
-    {
-        $this->router->version('v1', function () {
-            $this->router->get('foo', ['middleware' => 'foo|api.auth', function () use (&$middleware) {
-                $route = $this->router->getCurrentRoute();
-
-                $this->assertEquals(['api.auth', 'api.limiting', 'foo'], $route->getAction()['middleware']);
-
-                return 'foo';
-            }]);
-        });
-
-        $request = $this->createRequest('foo', 'GET');
-
-        $this->router->dispatch($request);
-    }
-
     public function testGroupNamespacesAreConcatenated()
     {
         $this->router->version('v1', ['namespace' => 'Dingo\Api'], function () {
@@ -267,5 +232,41 @@ class RouterTest extends Adapter\BaseAdapterTest
         $request = $this->createRequest('foo', 'GET');
 
         $this->assertEquals('foo', $this->router->dispatch($request)->getContent(), 'Router did not concatenate controller namespace correctly.');
+    }
+
+    public function testCurrentRouteName()
+    {
+        $this->router->version('v1', function () {
+            $this->router->get('foo', ['as' => 'foo', function () {
+                return 'foo';
+            }]);
+        });
+
+        $request = $this->createRequest('foo', 'GET');
+
+        $this->router->dispatch($request);
+
+        $this->assertFalse($this->router->currentRouteNamed('bar'));
+        $this->assertTrue($this->router->currentRouteNamed('foo'));
+        $this->assertTrue($this->router->is('*'));
+        $this->assertFalse($this->router->is('b*'));
+        $this->assertTrue($this->router->is('b*', 'f*'));
+    }
+
+    public function testCurrentRouteAction()
+    {
+        $this->router->version('v1', ['namespace' => 'Dingo\Api\Tests\Stubs'], function () {
+            $this->router->get('foo', 'RoutingControllerStub@getIndex');
+        });
+
+        $request = $this->createRequest('foo', 'GET');
+
+        $this->router->dispatch($request);
+
+        $this->assertFalse($this->router->currentRouteUses('foo'));
+        $this->assertTrue($this->router->currentRouteUses('Dingo\Api\Tests\Stubs\RoutingControllerStub@getIndex'));
+        $this->assertFalse($this->router->uses('foo*'));
+        $this->assertTrue($this->router->uses('*'));
+        $this->assertTrue($this->router->uses('Dingo\Api\Tests\Stubs\RoutingControllerStub@*'));
     }
 }
