@@ -124,7 +124,9 @@ class Factory
             return $this->getBindingFromCollection($class);
         }
 
-        $class = is_object($class) ? get_class($class) : $class;
+        // hhj:
+        // $class = is_object($class) ? get_class($class) : $class;
+        $class = is_array($class) ? 'array' : (is_object($class) ? get_class($class) : $class);
 
         if (! $this->hasBinding($class)) {
             throw new RuntimeException('Unable to find bound transformer for "'.$class.'" class.');
@@ -172,7 +174,9 @@ class Factory
             $class = $class->first();
         }
 
-        $class = is_object($class) ? get_class($class) : $class;
+        // hhj:
+        // $class = is_object($class) ? get_class($class) : $class;
+        $class = is_array($class) ? 'array' : (is_object($class) ? get_class($class) : $class);
 
         return isset($this->bindings[$class]);
     }
