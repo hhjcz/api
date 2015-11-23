@@ -2,15 +2,11 @@
 
 namespace Dingo\Api;
 
-use RuntimeException;
 use Dingo\Api\Auth\Auth;
-use Illuminate\Http\Request;
 use Dingo\Api\Routing\Router;
 use Illuminate\Container\Container;
 use Dingo\Api\Http\InternalRequest;
 use Illuminate\Filesystem\Filesystem;
-use Illuminate\Auth\GenericUser;
-use Illuminate\Database\Eloquent\Model;
 use Symfony\Component\HttpFoundation\Cookie;
 use Dingo\Api\Exception\InternalHttpException;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
@@ -125,11 +121,18 @@ class Dispatcher
     protected $persistAuthentication = true;
 
     /**
-     * API vendor.
+     * API subtype.
      *
      * @var string
      */
-    protected $vendor;
+    protected $subtype;
+
+    /**
+     * API standards tree.
+     *
+     * @var string
+     */
+    protected $standardsTree;
 
     /**
      * API prefix.
@@ -489,7 +492,7 @@ class Dispatcher
      */
     protected function getAcceptHeader()
     {
-        return sprintf('application/vnd.%s.%s+%s', $this->getVendor(), $this->getVersion(), $this->getFormat());
+        return sprintf('application/%s.%s.%s+%s', $this->getStandardsTree(), $this->getSubtype(), $this->getVersion(), $this->getFormat());
     }
 
     /**
@@ -508,7 +511,7 @@ class Dispatcher
         $this->clearCachedFacadeInstance();
 
         try {
-            $this->container['request'] = $request;
+            $this->container->instance('request', $request);
 
             $response = $this->router->dispatch($request);
 
@@ -616,25 +619,47 @@ class Dispatcher
     }
 
     /**
-     * Get the vendor.
+     * Get the subtype.
      *
      * @return string
      */
-    public function getVendor()
+    public function getSubtype()
     {
-        return $this->vendor;
+        return $this->subtype;
     }
 
     /**
-     * Set the vendor.
+     * Set the subtype.
      *
-     * @param string $vendor
+     * @param string $subtype
      *
      * @return void
      */
-    public function setVendor($vendor)
+    public function setSubtype($subtype)
     {
-        $this->vendor = $vendor;
+        $this->subtype = $subtype;
+    }
+
+    /**
+     * Get the standards tree.
+     *
+     * @return string
+     */
+    public function getStandardsTree()
+    {
+        return $this->standardsTree;
+    }
+
+    /**
+     * Set the standards tree.
+     *
+     * @param string $standardsTree
+     *
+     * @return void
+     */
+    public function setStandardsTree($standardsTree)
+    {
+        $this->standardsTree = $standardsTree;
     }
 
     /**

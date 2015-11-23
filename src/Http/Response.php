@@ -5,9 +5,12 @@ namespace Dingo\Api\Http;
 use ArrayObject;
 use UnexpectedValueException;
 use Dingo\Api\Transformer\Binding;
+use Dingo\Api\Event\ResponseIsMorphing;
+use Dingo\Api\Event\ResponseWasMorphed;
 use Illuminate\Contracts\Support\Arrayable;
 use Symfony\Component\HttpFoundation\Cookie;
 use Illuminate\Http\Response as IlluminateResponse;
+use Illuminate\Events\Dispatcher as EventDispatcher;
 use Illuminate\Database\Eloquent\Model as EloquentModel;
 use Dingo\Api\Transformer\Factory as TransformerFactory;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
@@ -35,6 +38,13 @@ class Response extends IlluminateResponse
      * @var \Dingo\Api\Transformer\TransformerFactory
      */
     protected static $transformer;
+
+    /**
+     * Event dispatcher instance.
+     *
+     * @var \Illuminate\Events\Dispatcher
+     */
+    protected static $events;
 
     /**
      * Create a new response instance.
@@ -78,10 +88,12 @@ class Response extends IlluminateResponse
      */
     public function morph($format = 'json')
     {
-        $content = $this->getOriginalContent();
+        $this->content = $this->getOriginalContent();
 
-        if (isset(static::$transformer) && static::$transformer->transformableResponse($content)) {
-            $content = static::$transformer->transform($content);
+        $this->fireMorphingEvent();
+
+        if (isset(static::$transformer) && static::$transformer->transformableResponse($this->content)) {
+            $this->content = static::$transformer->transform($this->content);
         }
 
         $formatter = static::getFormatter($format);
@@ -90,23 +102,51 @@ class Response extends IlluminateResponse
 
         $this->headers->set('content-type', $formatter->getContentType());
 
-        if ($content instanceof EloquentModel) {
-            $content = $formatter->formatEloquentModel($content);
-        } elseif ($content instanceof EloquentCollection) {
-            $content = $formatter->formatEloquentCollection($content);
-        } elseif (is_array($content) || $content instanceof ArrayObject || $content instanceof Arrayable) {
-            $content = $formatter->formatArray($content);
+        $this->fireMorphedEvent();
+
+        if ($this->content instanceof EloquentModel) {
+            $this->content = $formatter->formatEloquentModel($this->content);
+        } elseif ($this->content instanceof EloquentCollection) {
+            $this->content = $formatter->formatEloquentCollection($this->content);
+        } elseif (is_array($this->content) || $this->content instanceof ArrayObject || $this->content instanceof Arrayable) {
+            $this->content = $formatter->formatArray($this->content);
         } else {
             $this->headers->set('content-type', $defaultContentType);
         }
-
-        $this->content = $content;
 
         return $this;
     }
 
     /**
-     * {@inheritDoc}
+     * Fire the morphed event.
+     *
+     * @return void
+     */
+    protected function fireMorphedEvent()
+    {
+        if (! static::$events) {
+            return;
+        }
+
+        static::$events->fire(new ResponseWasMorphed($this, $this->content));
+    }
+
+    /**
+     * Fire the morphing event.
+     *
+     * @return void
+     */
+    protected function fireMorphingEvent()
+    {
+        if (! static::$events) {
+            return;
+        }
+
+        static::$events->fire(new ResponseIsMorphing($this, $this->content));
+    }
+
+    /**
+     * {@inheritdoc}
      */
     public function setContent($content)
     {
@@ -121,6 +161,18 @@ class Response extends IlluminateResponse
 
             return $this;
         }
+    }
+
+    /**
+     * Set the event dispatcher instance.
+     *
+     * @param \Illuminate\Events\Dispatcher $events
+     *
+     * @return void
+     */
+    public static function setEventDispatcher(EventDispatcher $events)
+    {
+        static::$events = $events;
     }
 
     /**

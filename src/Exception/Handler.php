@@ -4,21 +4,15 @@ namespace Dingo\Api\Exception;
 
 use Exception;
 use ReflectionFunction;
-use Dingo\Api\Http\Request;
+use Psr\Log\LoggerInterface;
 use Illuminate\Http\Response;
 use Dingo\Api\Contract\Debug\ExceptionHandler;
+use Dingo\Api\Contract\Debug\MessageBagErrors;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Illuminate\Contracts\Debug\ExceptionHandler as IlluminateExceptionHandler;
 
 class Handler implements ExceptionHandler, IlluminateExceptionHandler
 {
-    /**
-     * Parent exception handler instance.
-     *
-     * @var \Illuminate\Contracts\Debug\ExceptionHandler
-     */
-    protected $parent;
-
     /**
      * Array of exception handlers.
      *
@@ -50,15 +44,15 @@ class Handler implements ExceptionHandler, IlluminateExceptionHandler
     /**
      * Create a new exception handler instance.
      *
-     * @param \Illuminate\Contracts\Debug\ExceptionHandler $parent
-     * @param array                                        $format
-     * @param bool                                         $debug
+     * @param \Psr\Log\LoggerInterface $log
+     * @param array                    $format
+     * @param bool                     $debug
      *
      * @return void
      */
-    public function __construct(IlluminateExceptionHandler $parent, array $format, $debug)
+    public function __construct(LoggerInterface $log, array $format, $debug)
     {
-        $this->parent = $parent;
+        $this->log = $log;
         $this->format = $format;
         $this->debug = $debug;
     }
@@ -72,7 +66,7 @@ class Handler implements ExceptionHandler, IlluminateExceptionHandler
      */
     public function report(Exception $exception)
     {
-        return $this->parent->report($exception);
+        $this->log->error($exception);
     }
 
     /**
@@ -87,11 +81,7 @@ class Handler implements ExceptionHandler, IlluminateExceptionHandler
      */
     public function render($request, Exception $exception)
     {
-        if ($request instanceof Request) {
-            return $this->handle($exception);
-        }
-
-        return $this->parent->render($request, $exception);
+        return $this->handle($exception);
     }
 
     /**
@@ -104,7 +94,7 @@ class Handler implements ExceptionHandler, IlluminateExceptionHandler
      */
     public function renderForConsole($output, Exception $exception)
     {
-        return $this->parent->renderForConsole($output, $exception);
+        //
     }
 
     /**
@@ -130,6 +120,8 @@ class Handler implements ExceptionHandler, IlluminateExceptionHandler
      */
     public function handle(Exception $exception)
     {
+        $this->report($exception);
+
         foreach ($this->handlers as $hint => $handler) {
             if (! $exception instanceof $hint) {
                 continue;
@@ -214,10 +206,10 @@ class Handler implements ExceptionHandler, IlluminateExceptionHandler
 
         $replacements = [
             ':message' => $message,
-            ':status_code' => $statusCode
+            ':status_code' => $statusCode,
         ];
 
-        if ($exception instanceof ResourceException && $exception->hasErrors()) {
+        if ($exception instanceof MessageBagErrors && $exception->hasErrors()) {
             $replacements[':errors'] = $exception->getErrors();
         }
 
@@ -230,7 +222,7 @@ class Handler implements ExceptionHandler, IlluminateExceptionHandler
                 'line' => $exception->getLine(),
                 'file' => $exception->getFile(),
                 'class' => get_class($exception),
-                'trace' => explode("\n", $exception->getTraceAsString())
+                'trace' => explode("\n", $exception->getTraceAsString()),
             ];
         }
 

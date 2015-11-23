@@ -22,7 +22,7 @@ class LaravelServiceProvider extends ApiServiceProvider
         ]);
 
         $this->app['router']->middleware('api.auth', 'Dingo\Api\Http\Middleware\Auth');
-        $this->app['router']->middleware('api.limiting', 'Dingo\Api\Http\Middleware\RateLimit');
+        $this->app['router']->middleware('api.throttle', 'Dingo\Api\Http\Middleware\RateLimit');
     }
 
     /**
@@ -46,7 +46,7 @@ class LaravelServiceProvider extends ApiServiceProvider
     }
 
     /**
-     * Add the request middleware to the beggining of the kernel.
+     * Add the request middleware to the beginning of the kernel.
      *
      * @param \Illuminate\Contracts\Http\Kernel $kernel
      *

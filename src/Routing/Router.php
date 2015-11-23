@@ -5,54 +5,38 @@ namespace Dingo\Api\Routing;
 use Closure;
 use Exception;
 use RuntimeException;
+use Illuminate\Support\Str;
 use Dingo\Api\Http\Request;
 use Dingo\Api\Http\Response;
-use Dingo\Api\Exception\Handler;
 use Dingo\Api\Http\InternalRequest;
 use Illuminate\Container\Container;
 use Dingo\Api\Contract\Routing\Adapter;
 use Illuminate\Routing\ControllerInspector;
-use Dingo\Api\Exception\InternalHttpException;
+use Dingo\Api\Contract\Debug\ExceptionHandler;
 use Dingo\Api\Http\Parser\Accept as AcceptParser;
 use Illuminate\Http\Response as IlluminateResponse;
-use Dingo\Api\Http\Response\Builder as ResponseBuilder;
-use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\HttpKernel\Exception\NotAcceptableHttpException;
 
 class Router
 {
     /**
-     * Auth middleware identifier.
-     *
-     * @var string
-     */
-    const API_AUTH_MIDDLEWARE = 'api.auth';
-
-    /**
-     * Rate limit middleware identifier.
-     *
-     * @var string
-     */
-    const API_RATE_LIMIT_MIDDLEWARE = 'api.limiting';
-
-    /**
      * Routing adapter instance.
      *
-     * @var \Dingo\Api\Routing\Adapter\AdapterInterface
+     * @var \Dingo\Api\Contract\Routing\Adapter
      */
     protected $adapter;
 
     /**
      * Accept parser instance.
      *
-     * @var \Dingo\Api\Http\Parser\AcceptParser
+     * @var \Dingo\Api\Http\Parser\Accept
      */
     protected $accept;
 
     /**
      * Exception handler instance.
      *
-     * @var \Dingo\Api\Exception\Handler
+     * @var \Dingo\Api\Contract\Debug\ExceptionHandler
      */
     protected $exception;
 
@@ -108,16 +92,16 @@ class Router
     /**
      * Create a new router instance.
      *
-     * @param \Dingo\Api\Routing\Adapter\Adapter  $adapter
-     * @param \Dingo\Api\Http\Parser\AcceptParser $accept
-     * @param \Dingo\Api\Exception\Handler        $exception
-     * @param \Illuminate\Container\Container     $container
-     * @param string                              $domain
-     * @param string                              $prefix
+     * @param \Dingo\Api\Contract\Routing\Adapter        $adapter
+     * @param \Dingo\Api\Http\Parser\Accept              $accept
+     * @param \Dingo\Api\Contract\Debug\ExceptionHandler $exception
+     * @param \Illuminate\Container\Container            $container
+     * @param string                                     $domain
+     * @param string                                     $prefix
      *
      * @return void
      */
-    public function __construct(Adapter $adapter, AcceptParser $accept, Handler $exception, Container $container, $domain, $prefix)
+    public function __construct(Adapter $adapter, AcceptParser $accept, ExceptionHandler $exception, Container $container, $domain, $prefix)
     {
         $this->adapter = $adapter;
         $this->accept = $accept;
@@ -270,6 +254,35 @@ class Router
     }
 
     /**
+     * Create a new route that responding to all verbs.
+     *
+     * @param string                $uri
+     * @param array|string|callable $action
+     *
+     * @return mixed
+     */
+    public function any($uri, $action)
+    {
+        $verbs = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'];
+
+        return $this->addRoute($verbs, $uri, $action);
+    }
+
+    /**
+     * Create a new route with the given verbs.
+     *
+     * @param array|string          $methods
+     * @param string                $uri
+     * @param array|string|callable $action
+     *
+     * @return mixed
+     */
+    public function match($methods, $uri, $action)
+    {
+        return $this->addRoute(array_map('strtoupper', (array) $methods), $uri, $action);
+    }
+
+    /**
      * Register an array of resources.
      *
      * @param array $resources
@@ -344,7 +357,7 @@ class Router
             foreach ($routes as $route) {
                 $this->{$route['verb']}($route['uri'], [
                     'uses' => $controller.'@'.$method,
-                    'as' => array_get($names, $method)
+                    'as' => array_get($names, $method),
                 ]);
             }
         }
@@ -392,36 +405,14 @@ class Router
         $uri = $uri === '/' ? $uri : '/'.trim($uri, '/');
 
         if (! empty($action['prefix'])) {
-            $uri = '/'.rtrim(trim($action['prefix'], '/').'/'.trim($uri, '/'), '/');
+            $uri = '/'.ltrim(rtrim(trim($action['prefix'], '/').'/'.trim($uri, '/'), '/'), '/');
 
             unset($action['prefix']);
         }
 
         $action['uri'] = $uri;
 
-        $action = $this->addRouteMiddlewares($action);
-
         return $this->adapter->addRoute((array) $methods, $action['version'], $uri, $action);
-    }
-
-    /**
-     * Add the route middlewares to the action array.
-     *
-     * @param array $action
-     *
-     * @return array
-     */
-    protected function addRouteMiddlewares(array $action)
-    {
-        foreach ([static::API_RATE_LIMIT_MIDDLEWARE, static::API_AUTH_MIDDLEWARE] as $middleware) {
-            if (($key = array_search($middleware, $action['middleware'])) !== false) {
-                unset($action['middleware'][$key]);
-            }
-
-            array_unshift($action['middleware'], $middleware);
-        }
-
-        return $action;
     }
 
     /**
@@ -472,7 +463,11 @@ class Router
 
         $new['where'] = array_merge(array_get($old, 'where', []), array_get($new, 'where', []));
 
-        return array_merge_recursive(array_except($old, ['namespace', 'prefix', 'where']), $new);
+        if (isset($old['as'])) {
+            $new['as'] = $old['as'].array_get($new, 'as', '');
+        }
+
+        return array_merge_recursive(array_except($old, ['namespace', 'prefix', 'where', 'as']), $new);
     }
 
     /**
@@ -529,8 +524,9 @@ class Router
     /**
      * Format the prefix for the new group attributes.
      *
-     * @param  array  $new
-     * @param  array  $old
+     * @param array $new
+     * @param array $old
+     *
      * @return string
      */
     protected function formatPrefix($new, $old)
@@ -546,6 +542,8 @@ class Router
      * Dispatch a request via the adapter.
      *
      * @param \Dingo\Api\Http\Request $request
+     *
+     * @throws \Exception
      *
      * @return \Dingo\Api\Http\Response
      */
@@ -575,30 +573,31 @@ class Router
     /**
      * Prepare a response by transforming and formatting it correctly.
      *
-     * @param \Illuminate\Http\Response $response
-     * @param \Dingo\Api\Http\Request   $request
-     * @param string                    $format
-     * @param bool                      $raw
+     * @param mixed                   $response
+     * @param \Dingo\Api\Http\Request $request
+     * @param string                  $format
      *
      * @return \Dingo\Api\Http\Response
      */
-    protected function prepareResponse(IlluminateResponse $response, Request $request, $format)
+    protected function prepareResponse($response, Request $request, $format)
     {
-        if (! $response instanceof Response) {
+        if ($response instanceof IlluminateResponse) {
             $response = Response::makeFromExisting($response);
         }
 
-        // If we try and get a formatter that does not exist we'll let the exception
-        // handler deal with it. At worst we'll get a generic JSON response that
-        // a consumer can hopefully deal with. Ideally they won't be using
-        // an unsupported format.
-        try {
-            $response->getFormatter($format)->setResponse($response)->setRequest($request);
-        } catch (NotAcceptableHttpException $exception) {
-            return $this->exception->handle($exception);
-        }
+        if ($response instanceof Response) {
+            // If we try and get a formatter that does not exist we'll let the exception
+            // handler deal with it. At worst we'll get a generic JSON response that
+            // a consumer can hopefully deal with. Ideally they won't be using
+            // an unsupported format.
+            try {
+                $response->getFormatter($format)->setResponse($response)->setRequest($request);
+            } catch (NotAcceptableHttpException $exception) {
+                return $this->exception->handle($exception);
+            }
 
-        $response = $response->morph($format);
+            $response = $response->morph($format);
+        }
 
         if ($response->isSuccessful() && $this->requestIsConditional()) {
             if (! $response->headers->has('ETag')) {
@@ -653,7 +652,7 @@ class Router
         if (isset($this->currentRoute)) {
             return $this->currentRoute;
         } elseif (! $this->hasDispatchedRoutes()) {
-            return null;
+            return;
         }
 
         $request = $this->container['request'];
@@ -662,11 +661,21 @@ class Router
     }
 
     /**
+     * Get the currently dispatched route instance.
+     *
+     * @return \Illuminate\Routing\Route
+     */
+    public function current()
+    {
+        return $this->getCurrentRoute();
+    }
+
+    /**
      * Create a new route instance from an adapter route.
      *
      * @param array|\Illuminate\Routing\Route $route
      *
-     * @return \Dingi\Api\Routing\Route
+     * @return \Dingo\Api\Routing\Route
      */
     public function createRoute($route)
     {
@@ -783,5 +792,91 @@ class Router
     public function hasDispatchedRoutes()
     {
         return $this->routesDispatched > 0;
+    }
+
+    /**
+     * Get the current route name.
+     *
+     * @return string|null
+     */
+    public function currentRouteName()
+    {
+        return $this->current() ? $this->current()->getName() : null;
+    }
+
+    /**
+     * Alias for the "currentRouteNamed" method.
+     *
+     * @param mixed string
+     *
+     * @return bool
+     */
+    public function is()
+    {
+        foreach (func_get_args() as $pattern) {
+            if (Str::is($pattern, $this->currentRouteName())) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Determine if the current route matches a given name.
+     *
+     * @param string $name
+     *
+     * @return bool
+     */
+    public function currentRouteNamed($name)
+    {
+        return $this->current() ? $this->current()->getName() == $name : false;
+    }
+
+    /**
+     * Get the current route action.
+     *
+     * @return string|null
+     */
+    public function currentRouteAction()
+    {
+        if (! $route = $this->current()) {
+            return;
+        }
+
+        $action = $route->getAction();
+
+        return is_string($action['uses']) ? $action['uses'] : null;
+    }
+
+    /**
+     * Alias for the "currentRouteUses" method.
+     *
+     * @param  mixed  string
+     *
+     * @return bool
+     */
+    public function uses()
+    {
+        foreach (func_get_args() as $pattern) {
+            if (Str::is($pattern, $this->currentRouteAction())) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Determine if the current route action matches a given action.
+     *
+     * @param string $action
+     *
+     * @return bool
+     */
+    public function currentRouteUses($action)
+    {
+        return $this->currentRouteAction() == $action;
     }
 }

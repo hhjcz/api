@@ -7,6 +7,7 @@ use RuntimeException;
 use Dingo\Api\Auth\Auth;
 use Dingo\Api\Dispatcher;
 use Dingo\Api\Routing\Router;
+use Dingo\Api\Console\Command;
 use Dingo\Api\Routing\UrlGenerator;
 use Illuminate\Support\ServiceProvider;
 use Dingo\Api\Routing\ResourceRegistrar;
@@ -24,12 +25,9 @@ abstract class ApiServiceProvider extends ServiceProvider
     {
         $this->setupConfig();
 
-        $this->app->singleton('Illuminate\Contracts\Debug\ExceptionHandler', function ($app) {
-            return $app['api.exception'];
-        });
-
         Http\Response::setFormatters($this->prepareConfigValues($this->app['config']['api.formats']));
         Http\Response::setTransformer($this->app['api.transformer']);
+        Http\Response::setEventDispatcher($this->app['events']);
 
         $this->app->rebinding('api.routes', function ($app, $routes) {
             $app['api.url']->setRouteCollections($routes);
@@ -55,15 +53,16 @@ abstract class ApiServiceProvider extends ServiceProvider
         $this->registerResponseFactory();
         $this->registerMiddleware();
         $this->registerTransformer();
+        $this->registerDocsCommand();
 
         $this->commands([
-            'Dingo\Api\Console\Command\Docs'
+            'Dingo\Api\Console\Command\Docs',
         ]);
 
         if (class_exists('Illuminate\Foundation\Application', false)) {
             $this->commands([
                 'Dingo\Api\Console\Command\Cache',
-                'Dingo\Api\Console\Command\Routes'
+                'Dingo\Api\Console\Command\Routes',
             ]);
         }
     }
@@ -100,14 +99,16 @@ abstract class ApiServiceProvider extends ServiceProvider
             'api.router'         => 'Dingo\Api\Routing\Router',
             'api.router.adapter' => 'Dingo\Api\Contract\Routing\Adapter',
             'api.auth'           => 'Dingo\Api\Auth\Auth',
-            'api.limiting'       => 'Dingo\Api\Contract\Http\RateLimit\Adapter',
+            'api.limiting'       => 'Dingo\Api\Http\RateLimit\Handler',
             'api.transformer'    => 'Dingo\Api\Transformer\Factory',
             'api.url'            => 'Dingo\Api\Routing\UrlGenerator',
-            'api.exception'      => 'Dingo\Api\Exception\Handler'
+            'api.exception'      => ['Dingo\Api\Exception\Handler', 'Dingo\Api\Contract\Debug\ExceptionHandler'],
         ];
 
-        foreach ($aliases as $key => $alias) {
-            $this->app->alias($key, $alias);
+        foreach ($aliases as $key => $aliases) {
+            foreach ((array) $aliases as $alias) {
+                $this->app->alias($key, $alias);
+            }
         }
     }
 
@@ -118,12 +119,10 @@ abstract class ApiServiceProvider extends ServiceProvider
      */
     protected function registerExceptionHandler()
     {
-        $exception = $this->app['Illuminate\Contracts\Debug\ExceptionHandler'];
-
-        $this->app->singleton('api.exception', function ($app) use ($exception) {
+        $this->app->singleton('api.exception', function ($app) {
             $config = $app['config']['api'];
 
-            return new ExceptionHandler($exception, $config['errorFormat'], $config['debug']);
+            return new ExceptionHandler($app['log'], $config['errorFormat'], $config['debug']);
         });
     }
 
@@ -139,7 +138,8 @@ abstract class ApiServiceProvider extends ServiceProvider
 
             $config = $app['config']['api'];
 
-            $dispatcher->setVendor($config['vendor']);
+            $dispatcher->setSubtype($config['subtype']);
+            $dispatcher->setStandardsTree($config['standardsTree']);
             $dispatcher->setPrefix($config['prefix']);
             $dispatcher->setDefaultVersion($config['version']);
             $dispatcher->setDefaultDomain($config['domain']);
@@ -187,14 +187,18 @@ abstract class ApiServiceProvider extends ServiceProvider
         $this->app->singleton('api.router', function ($app) {
             $config = $app['config']['api'];
 
-            return new Router(
+            $router = new Router(
                 $app['api.router.adapter'],
-                new Http\Parser\Accept($config['vendor'], $config['version'], $config['defaultFormat']),
-                $app['api.exception'],
+                new Http\Parser\Accept($config['standardsTree'], $config['subtype'], $config['version'], $config['defaultFormat']),
+                $app['Dingo\Api\Contract\Debug\ExceptionHandler'],
                 $app,
                 $config['domain'],
                 $config['prefix']
             );
+
+            $router->setConditionalRequest($config['conditionalRequest']);
+
+            return $router;
         });
 
         $this->app->singleton('Dingo\Api\Routing\ResourceRegistrar', function ($app) {
@@ -241,7 +245,7 @@ abstract class ApiServiceProvider extends ServiceProvider
             $config = $app['config']['api'];
 
             return new Http\Validation\Accept(
-                new Http\Parser\Accept($config['vendor'], $config['version'], $config['defaultFormat']),
+                new Http\Parser\Accept($config['standardsTree'], $config['subtype'], $config['version'], $config['defaultFormat']),
                 $config['strict']
             );
         });
@@ -267,7 +271,7 @@ abstract class ApiServiceProvider extends ServiceProvider
     protected function registerMiddleware()
     {
         $this->app->singleton('Dingo\Api\Http\Middleware\Request', function ($app) {
-            return new Http\Middleware\Request($app, $app['api.router'], $app['api.http.validator'], $app['app.middleware']);
+            return new Http\Middleware\Request($app, $app['api.exception'], $app['api.router'], $app['api.http.validator'], $app['app.middleware']);
         });
 
         $this->app->singleton('Dingo\Api\Http\Middleware\Auth', function ($app) {
@@ -288,6 +292,26 @@ abstract class ApiServiceProvider extends ServiceProvider
     {
         $this->app->singleton('api.transformer', function ($app) {
             return new TransformerFactory($app, $this->prepareConfigValue($app['config']['api.transformer']));
+        });
+    }
+
+    /**
+     * Register the documentation command.
+     *
+     * @return void
+     */
+    protected function registerDocsCommand()
+    {
+        $this->app->singleton('Dingo\Api\Console\Command\Docs', function ($app) {
+            $config = $app['config']['api'];
+
+            return new Command\Docs(
+                $app['api.router'],
+                $app['Dingo\Blueprint\Blueprint'],
+                $app['Dingo\Blueprint\Writer'],
+                $config['name'],
+                $config['version']
+            );
         });
     }
 
@@ -316,9 +340,7 @@ abstract class ApiServiceProvider extends ServiceProvider
      */
     protected function prepareConfigValue($instance)
     {
-        if (is_callable($instance)) {
-            return call_user_func($instance, $this->app);
-        } elseif (is_string($instance)) {
+        if (is_string($instance)) {
             return $this->app->make($instance);
         } else {
             return $instance;

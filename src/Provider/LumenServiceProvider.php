@@ -5,7 +5,6 @@ namespace Dingo\Api\Provider;
 use ReflectionClass;
 use FastRoute\RouteParser\Std as StdRouteParser;
 use Dingo\Api\Routing\Adapter\Lumen as LumenAdapter;
-use FastRoute\Dispatcher\GroupCountBased as GcbDispatcher;
 use FastRoute\DataGenerator\GroupCountBased as GcbDataGenerator;
 
 class LumenServiceProvider extends ApiServiceProvider
@@ -21,8 +20,20 @@ class LumenServiceProvider extends ApiServiceProvider
 
         $this->app->routeMiddleware([
             'api.auth' => 'Dingo\Api\Http\Middleware\Auth',
-            'api.limiting' => 'Dingo\Api\Http\Middleware\RateLimit',
+            'api.throttle' => 'Dingo\Api\Http\Middleware\RateLimit',
         ]);
+    }
+
+    /**
+     * Setup the configuration.
+     *
+     * @return void
+     */
+    protected function setupConfig()
+    {
+        $this->app->configure('api');
+
+        parent::setupConfig();
     }
 
     /**

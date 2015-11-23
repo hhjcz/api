@@ -4,6 +4,12 @@ namespace Dingo\Api\Routing;
 
 use ErrorException;
 
+/**
+ * @property \Dingo\Api\Dispatcher                                            $api
+ * @property \Illuminate\Auth\GenericUser|\Illuminate\Database\Eloquent\Model $user
+ * @property \Dingo\Api\Auth\Auth                                             $auth
+ * @property \Dingo\Api\Http\Response\Factory                                 $response
+ */
 trait Helpers
 {
     /**
@@ -13,11 +19,9 @@ trait Helpers
      */
     protected $methodProperties = [
         'scopes' => [],
-        'protected' => [],
-        'unprotected' => [],
         'providers' => [],
         'rateLimit' => [],
-        'throttles' => []
+        'throttles' => [],
     ];
 
     /**
@@ -175,7 +179,7 @@ trait Helpers
     public function __get($key)
     {
         $callable = [
-            'api', 'user', 'auth', 'response'
+            'api', 'user', 'auth', 'response',
         ];
 
         if (in_array($key, $callable) && method_exists($this, $key)) {

@@ -58,7 +58,7 @@ class OAuth2 extends Authorization
     /**
      * Authenticate request with the OAuth 2.0 resource server.
      *
-     * @param \Illuminate\Http\Request  $request
+     * @param \Illuminate\Http\Request $request
      * @param \Dingo\Api\Routing\Route $route
      *
      * @throws \Symfony\Component\HttpKernel\Exception\UnauthorizedHttpException
@@ -137,7 +137,7 @@ class OAuth2 extends Authorization
      *
      * @param callable $resolver
      *
-     * @return \Dingo\Api\Auth\LeagueOAuth2Provider
+     * @return \Dingo\Api\Contract\Auth\Provider
      */
     public function setUserResolver(callable $resolver)
     {
@@ -151,7 +151,7 @@ class OAuth2 extends Authorization
      *
      * @param callable $resolver
      *
-     * @return \Dingo\Api\Auth\LeagueOAuth2Provider
+     * @return \Dingo\Api\Contract\Auth\Provider
      */
     public function setClientResolver(callable $resolver)
     {

@@ -2,10 +2,8 @@
 
 namespace Dingo\Api\Console\Command;
 
-use Dingo\Api\Routing\Router;
 use Illuminate\Console\Command;
 use Illuminate\Filesystem\Filesystem;
-use Symfony\Component\Console\Input\InputOption;
 
 class Cache extends Command
 {
@@ -66,9 +64,14 @@ class Cache extends Command
         }
 
         $stub = "app('api.router')->setAdapterRoutes(unserialize(base64_decode('{{routes}}')));";
+        $path = $this->laravel->getCachedRoutesPath();
+
+        if (! $this->files->exists($path)) {
+            $stub = "<?php\n\n$stub";
+        }
 
         $this->files->append(
-            $this->laravel->getCachedRoutesPath(),
+            $path,
             str_replace('{{routes}}', base64_encode(serialize($routes)), $stub)
         );
     }
