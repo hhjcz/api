@@ -120,7 +120,9 @@ class Factory
      */
     public function item($item, $transformer, array $parameters = [], Closure $after = null)
     {
-        $class = get_class($item);
+	// hhj:
+        // $class = get_class($item);
+        $class = is_array($item) ? 'array' : get_class($item);
 
         $binding = $this->transformer->register($class, $transformer, $parameters, $after);
 
