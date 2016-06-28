@@ -46,8 +46,8 @@ class JWT extends Authorization
             if (! $user = $this->auth->setToken($token)->authenticate()) {
                 throw new UnauthorizedHttpException('JWTAuth', 'Unable to authenticate with invalid token.');
             }
-        } catch (JWTException $e) {
-            throw new UnauthorizedHttpException('JWTAuth', $e->getMessage());
+        } catch (JWTException $exception) {
+            throw new UnauthorizedHttpException('JWTAuth', $exception->getMessage(), $exception);
         }
 
         return $user;

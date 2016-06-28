@@ -16,6 +16,11 @@ class RouterTest extends Adapter\BaseAdapterTest
         return $this->container->make('Dingo\Api\Tests\Stubs\RoutingAdapterStub');
     }
 
+    public function getContainerInstance()
+    {
+        return new Container;
+    }
+
     public function testRouteOptionsMergeCorrectly()
     {
         $this->router->version('v1', ['scopes' => 'foo|bar'], function () {
@@ -52,9 +57,9 @@ class RouterTest extends Adapter\BaseAdapterTest
         $route = $this->router->getCurrentRoute();
 
         $this->assertEquals(['baz', 'bing'], $route->scopes());
-        $this->assertEquals(['foo', 'red', 'black'], $route->getAuthProviders());
+        $this->assertEquals(['foo', 'red', 'black'], $route->getAuthenticationProviders());
         $this->assertEquals(10, $route->getRateLimit());
-        $this->assertEquals(20, $route->getRateExpiration());
+        $this->assertEquals(20, $route->getRateLimitExpiration());
         $this->assertInstanceOf('Dingo\Api\Tests\Stubs\BasicThrottleStub', $route->getThrottle());
     }
 
@@ -247,6 +252,7 @@ class RouterTest extends Adapter\BaseAdapterTest
             });
         });
 
+        $this->exception->shouldReceive('report')->once()->with($exception);
         $this->exception->shouldReceive('handle')->once()->with($exception)->andReturn(new Http\Response('exception'));
 
         $request = $this->createRequest('foo', 'GET', ['accept' => 'application/vnd.api.v1+json']);

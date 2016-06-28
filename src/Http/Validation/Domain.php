@@ -2,11 +2,14 @@
 
 namespace Dingo\Api\Http\Validation;
 
+use Illuminate\support\Str;
 use Illuminate\Http\Request;
 use Dingo\Api\Contract\Http\Validator;
 
 class Domain implements Validator
 {
+    const PATTERN_STRIP_PROTOCOL = '/:\d*$/';
+
     /**
      * API domain.
      *
@@ -35,7 +38,7 @@ class Domain implements Validator
      */
     public function validate(Request $request)
     {
-        return ! is_null($this->domain) && $request->header('host') == $this->stripProtocol($this->domain);
+        return ! is_null($this->domain) && $request->getHost() === $this->getStrippedDomain();
     }
 
     /**
@@ -47,10 +50,36 @@ class Domain implements Validator
      */
     protected function stripProtocol($domain)
     {
-        if (str_contains($domain, '://')) {
+        if (Str::contains($domain, '://')) {
             $domain = substr($domain, strpos($domain, '://') + 3);
         }
 
         return $domain;
+    }
+
+    /**
+     * Strip the port from a domain.
+     *
+     * @param $domain
+     *
+     * @return mixed
+     */
+    protected function stripPort($domain)
+    {
+        if ($domainStripped = preg_replace(self::PATTERN_STRIP_PROTOCOL, null, $domain)) {
+            return $domainStripped;
+        }
+
+        return $domain;
+    }
+
+    /**
+     * Get the domain stripped from protocol and port.
+     *
+     * @return mixed
+     */
+    protected function getStrippedDomain()
+    {
+        return $this->stripPort($this->stripProtocol($this->domain));
     }
 }

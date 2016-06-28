@@ -75,7 +75,7 @@ class Fractal implements Adapter
     {
         $this->parseFractalIncludes($request);
 
-        $resource = $this->createResource($response, $transformer, $binding->getParameters());
+        $resource = $this->createResource($response, $transformer, $parameters = $binding->getParameters());
 
         // If the response is a paginator then we'll create a new paginator
         // adapter for Laravel and set the paginator instance on our
@@ -98,7 +98,9 @@ class Fractal implements Adapter
 
         $binding->fireCallback($resource, $this->fractal);
 
-        return $this->fractal->createData($resource)->toArray();
+        $identifier = isset($parameters['identifier']) ? $parameters['identifier'] : null;
+
+        return $this->fractal->createData($resource, $identifier)->toArray();
     }
 
     /**
@@ -188,9 +190,7 @@ class Fractal implements Adapter
      */
     protected function mergeEagerLoads($transformer, $requestedIncludes)
     {
-        $availableIncludes = array_intersect($transformer->getAvailableIncludes(), (array) $requestedIncludes);
-
-        $includes = array_merge($availableIncludes, $transformer->getDefaultIncludes());
+        $includes = array_merge($requestedIncludes, $transformer->getDefaultIncludes());
 
         $eagerLoads = [];
 
@@ -199,5 +199,29 @@ class Fractal implements Adapter
         }
 
         return $eagerLoads;
+    }
+
+    /**
+     * Disable eager loading.
+     *
+     * @return \Dingo\Api\Transformer\Adapter\Fractal
+     */
+    public function disableEagerLoading()
+    {
+        $this->eagerLoading = false;
+
+        return $this;
+    }
+
+    /**
+     * Enable eager loading.
+     *
+     * @return \Dingo\Api\Transformer\Adapter\Fractal
+     */
+    public function enableEagerLoading()
+    {
+        $this->eagerLoading = true;
+
+        return $this;
     }
 }

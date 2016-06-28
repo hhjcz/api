@@ -2,6 +2,8 @@
 
 namespace Dingo\Api\Console\Command;
 
+use Illuminate\Support\Arr;
+use Illuminate\Support\Str;
 use Dingo\Api\Routing\Router;
 use Illuminate\Console\Command;
 use Symfony\Component\Console\Input\InputOption;
@@ -9,6 +11,13 @@ use Illuminate\Foundation\Console\RouteListCommand;
 
 class Routes extends RouteListCommand
 {
+    /**
+     * Dingo router instance.
+     *
+     * @var \Dingo\Api\Routing\Router
+     */
+    protected $router;
+
     /**
      * Array of route collections.
      *
@@ -28,14 +37,14 @@ class Routes extends RouteListCommand
      *
      * @var string
      */
-    protected $description = 'List all registeted API routes';
+    protected $description = 'List all registered API routes';
 
     /**
      * The table headers for the command.
      *
      * @var array
      */
-    protected $headers = ['Host', 'URI', 'Name', 'Action', 'Protected', 'Version(s)', 'Scope(s)'];
+    protected $headers = ['Host', 'Method', 'URI', 'Name', 'Action', 'Protected', 'Version(s)', 'Scope(s)', 'Rate Limit'];
 
     /**
      * Create a new routes command instance.
@@ -50,7 +59,19 @@ class Routes extends RouteListCommand
         // constructor on the command class.
         Command::__construct();
 
-        $this->routes = $router->getRoutes();
+        $this->router = $router;
+    }
+
+    /**
+     * Execute the console command.
+     *
+     * @return void
+     */
+    public function fire()
+    {
+        $this->routes = $this->router->getRoutes();
+
+        parent::fire();
     }
 
     /**
@@ -62,22 +83,24 @@ class Routes extends RouteListCommand
     {
         $routes = [];
 
-        foreach ($this->routes as $collection) {
+        foreach ($this->router->getRoutes() as $collection) {
             foreach ($collection->getRoutes() as $route) {
                 $routes[] = $this->filterRoute([
                     'host'      => $route->domain(),
-                    'uri'       => implode('|', $route->methods()).' '.$route->uri(),
+                    'method'    => implode('|', $route->methods()),
+                    'uri'       => $route->uri(),
                     'name'      => $route->getName(),
                     'action'    => $route->getActionName(),
-                    'protected' => $this->routeHasAuthMiddleware($route) ? 'Yes' : 'No',
+                    'protected' => $route->isProtected() ? 'Yes' : 'No',
                     'versions'  => implode(', ', $route->versions()),
                     'scopes'    => implode(', ', $route->scopes()),
+                    'rate'      => $this->routeRateLimit($route),
                 ]);
             }
         }
 
         if ($sort = $this->option('sort')) {
-            $routes = array_sort($routes, function ($value) use ($sort) {
+            $routes = Arr::sort($routes, function ($value) use ($sort) {
                 return $value[$sort];
             });
         }
@@ -86,19 +109,34 @@ class Routes extends RouteListCommand
             $routes = array_reverse($routes);
         }
 
+        if ($this->option('short')) {
+            $this->headers = ['Method', 'URI', 'Name', 'Version(s)'];
+
+            $routes = array_map(function ($item) {
+                return array_only($item, ['method', 'uri', 'name', 'versions']);
+            }, $routes);
+        }
+
         return array_filter(array_unique($routes, SORT_REGULAR));
     }
 
     /**
-     * Determine if the route has the authentication middleware.
+     * Display the routes rate limiting requests per second. This takes the limit
+     * and divides it by the expiration time in seconds to give you a rough
+     * idea of how many requests you'd be able to fire off per second
+     * on the route.
      *
-     * @return string
+     * @param \Dingo\Api\Routing\Route $route
+     *
+     * @return null|string
      */
-    protected function routeHasAuthMiddleware($route)
+    protected function routeRateLimit($route)
     {
-        $middleware = $route->getMiddleware();
+        list($limit, $expires) = [$route->getRateLimit(), $route->getRateLimitExpiration()];
 
-        return isset($middleware['api.auth']);
+        if ($limit && $expires) {
+            return sprintf('%s req/s', round($limit / ($expires * 60), 2));
+        }
     }
 
     /**
@@ -144,6 +182,7 @@ class Routes extends RouteListCommand
                 ['scopes', 'S', InputOption::VALUE_IS_ARRAY | InputOption::VALUE_OPTIONAL, 'Filter the routes by scopes'],
                 ['protected', null, InputOption::VALUE_NONE, 'Filter the protected routes'],
                 ['unprotected', null, InputOption::VALUE_NONE, 'Filter the unprotected routes'],
+                ['short', null, InputOption::VALUE_NONE, 'Get an abridged version of the routes'],
             ]
         );
     }
@@ -157,7 +196,7 @@ class Routes extends RouteListCommand
      */
     protected function filterByPath(array $route)
     {
-        return str_contains($route['uri'], $this->option('path'));
+        return Str::contains($route['uri'], $this->option('path'));
     }
 
     /**
@@ -194,7 +233,7 @@ class Routes extends RouteListCommand
     protected function filterByVersions(array $route)
     {
         foreach ($this->option('versions') as $version) {
-            if (str_contains($route['versions'], $version)) {
+            if (Str::contains($route['versions'], $version)) {
                 return true;
             }
         }
@@ -211,7 +250,7 @@ class Routes extends RouteListCommand
      */
     protected function filterByName(array $route)
     {
-        return str_contains($route['name'], $this->option('name'));
+        return Str::contains($route['name'], $this->option('name'));
     }
 
     /**
@@ -224,7 +263,7 @@ class Routes extends RouteListCommand
     protected function filterByScopes(array $route)
     {
         foreach ($this->option('scopes') as $scope) {
-            if (str_contains($route['scopes'], $scope)) {
+            if (Str::contains($route['scopes'], $scope)) {
                 return true;
             }
         }

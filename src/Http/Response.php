@@ -4,11 +4,11 @@ namespace Dingo\Api\Http;
 
 use ArrayObject;
 use UnexpectedValueException;
+use Illuminate\Http\JsonResponse;
 use Dingo\Api\Transformer\Binding;
 use Dingo\Api\Event\ResponseIsMorphing;
 use Dingo\Api\Event\ResponseWasMorphed;
 use Illuminate\Contracts\Support\Arrayable;
-use Symfony\Component\HttpFoundation\Cookie;
 use Illuminate\Http\Response as IlluminateResponse;
 use Illuminate\Events\Dispatcher as EventDispatcher;
 use Illuminate\Database\Eloquent\Model as EloquentModel;
@@ -18,6 +18,13 @@ use Symfony\Component\HttpKernel\Exception\NotAcceptableHttpException;
 
 class Response extends IlluminateResponse
 {
+    /**
+     * The exception that triggered the error response.
+     *
+     * @var \Exception
+     */
+    public $exception;
+
     /**
      * Transformer binding instance.
      *
@@ -75,6 +82,22 @@ class Response extends IlluminateResponse
         $new = static::create($old->getOriginalContent(), $old->getStatusCode());
 
         $new->headers = $old->headers;
+
+        return $new;
+    }
+
+    /**
+     * Make an API response from an existing JSON response.
+     *
+     * @param \Illuminate\Http\JsonResponse $json
+     *
+     * @return \Dingo\Api\Http\Response
+     */
+    public static function makeFromJson(JsonResponse $json)
+    {
+        $new = static::create(json_decode($json->getContent(), true), $json->getStatusCode());
+
+        $new->headers = $json->headers;
 
         return $new;
     }
@@ -307,11 +330,11 @@ class Response extends IlluminateResponse
     /**
      * Add a cookie to the response.
      *
-     * @param \Symfony\Component\HttpFoundation\Cookie $cookie
+     * @param \Symfony\Component\HttpFoundation\Cookie|mixed $cookie
      *
      * @return \Dingo\Api\Http\Response
      */
-    public function cookie(Cookie $cookie)
+    public function cookie($cookie)
     {
         return $this->withCookie($cookie);
     }

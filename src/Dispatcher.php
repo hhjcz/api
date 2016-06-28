@@ -183,13 +183,13 @@ class Dispatcher
     }
 
     /**
-     * Setup the request stack by cloning the initial request.
+     * Setup the request stack by grabbing the initial request.
      *
      * @return void
      */
     protected function setupRequestStack()
     {
-        $this->requestStack[] = clone $this->container['request'];
+        $this->requestStack[] = $this->container['request'];
     }
 
     /**
@@ -430,6 +430,16 @@ class Dispatcher
             $this->content = $content;
         }
 
+        // Sometimes after setting the initial request another request might be made prior to
+        // internally dispatching an API request. We need to capture this request as well
+        // and add it to the request stack as it has become the new parent request to
+        // this internal request. This will generally occur during tests when
+        // using the crawler to navigate pages that also make internal
+        // requests.
+        if (end($this->requestStack) != $this->container['request']) {
+            $this->requestStack[] = $this->container['request'];
+        }
+
         $this->requestStack[] = $request = $this->createRequest($verb, $uri, $parameters);
 
         return $this->dispatch($request);
@@ -453,10 +463,18 @@ class Dispatcher
         // If the URI does not have a scheme then we can assume that there it is not an
         // absolute URI, in this case we'll prefix the root requests path to the URI.
         if (! parse_url($uri, PHP_URL_SCHEME)) {
-            $uri = rtrim($this->getRootRequest()->root(), '/').'/'.ltrim($uri);
+            $uri = rtrim($this->getRootRequest()->root(), '/').'/'.ltrim($uri, '/');
         }
 
-        $request = InternalRequest::create($uri, $verb, $parameters, $this->cookies, $this->uploads, [], $this->content);
+        $request = InternalRequest::create(
+            $uri,
+            $verb,
+            $parameters,
+            $this->cookies,
+            $this->uploads,
+            $this->container['request']->server->all(),
+            $this->content
+        );
 
         $request->headers->set('host', $this->getDomain());
 

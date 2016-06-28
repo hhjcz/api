@@ -39,9 +39,9 @@ class Factory
      *
      * @return \Dingo\Api\Http\Response
      */
-    public function created($location = null)
+    public function created($location = null, $content = null)
     {
-        $response = new Response(null);
+        $response = new Response($content);
         $response->setStatusCode(201);
 
         if (! is_null($location)) {
@@ -238,6 +238,20 @@ class Factory
     }
 
     /**
+     * Return a 405 method not allowed error.
+     *
+     * @param string $message
+     *
+     * @throws \Symfony\Component\HttpKernel\Exception\HttpException
+     *
+     * @return void
+     */
+    public function errorMethodNotAllowed($message = 'Method Not Allowed')
+    {
+        $this->error($message, 405);
+    }
+
+    /**
      * Call magic methods beginning with "with".
      *
      * @param string $method
@@ -253,7 +267,8 @@ class Factory
             return call_user_func_array([$this, Str::camel(substr($method, 4))], $parameters);
 
         // Because PHP won't let us name the method "array" we'll simply watch for it
-        // in here and return the new binding. Gross.
+        // in here and return the new binding. Gross. This is now DEPRECATED and
+        // should not be used. Just return an array or a new response instance.
         } elseif ($method == 'array') {
             return new Response($parameters[0]);
         }
